@@ -305,12 +305,11 @@ Tools:
   node ${WEB_SEARCH_SCRIPT} gh-search-code "keyword" --repo owner/repo --max 10
   node ${WEB_SEARCH_SCRIPT} gh-file owner/repo path/to/file.py
 
-Frameworks (only these three):
-1. LangGraph — langchain-ai/langgraph (Python, libs/langgraph/langgraph/)
-2. CrewAI — crewAIInc/crewAI (Python, src/crewai/)
-3. AutoGen — microsoft/autogen (Python, autogen/)
+Pick the 3 most relevant frameworks for THIS capability from:
+- LangGraph (langchain-ai/langgraph), CrewAI (crewAIInc/crewAI), AutoGen (microsoft/autogen)
+- Mastra (mastra-ai/mastra), LlamaIndex (run-llama/llama_index), Semantic Kernel (microsoft/semantic-kernel)
 
-For each: search for relevant code, fetch 2-3 source files, read the implementation. Note if they don't support it. Do NOT guess at APIs.
+For each chosen framework: search for relevant code, fetch 2-3 source files, read the implementation. Note if they don't support it. Do NOT guess at APIs.
 
 Output per framework: Supports? Implementation (cite paths). Code snippets. Gaps. Then: common patterns and what Pydantic AI should consider.`;
 

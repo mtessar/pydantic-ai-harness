@@ -3,7 +3,10 @@
  * Used by both the interactive PI extension (index.ts) and the CI script (ci-plan-debate.mjs).
  */
 
-export const CODEBASE_RESEARCH_PROMPT = `You are investigating a codebase for an implementation plan. You have an issue with full discussion context.
+export function getCodebaseResearchPrompt(codeRepo) {
+	return `You are investigating the ${codeRepo} codebase for an implementation plan.
+
+The issue you've been given is from a separate planning repo, but the code you are reading and searching is ${codeRepo}. Your tools (read, grep, find, ls) operate on the ${codeRepo} checkout.
 
 Gather every relevant fact. Do NOT propose solutions.
 
@@ -27,6 +30,7 @@ OUTPUT:
 ## Test Coverage — test files, what they cover, gaps
 ## Documentation — docs files, docstrings, discrepancies
 ## Constraints — backward compat, type safety, dependencies (cite sources)`;
+}
 
 export function getCompetitiveAnalysisPrompt(webSearchScript) {
 	return `You are researching how competing agent/LLM frameworks implement a capability described in a GitHub issue.

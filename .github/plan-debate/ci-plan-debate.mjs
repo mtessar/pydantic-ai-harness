@@ -36,7 +36,8 @@ function getArg(name) {
 }
 
 const ISSUE_NUMBER = parseInt(getArg("--issue") || process.env.ISSUE_NUMBER || "", 10);
-const REPO = getArg("--repo") || process.env.REPO || "pydantic/pydantic-ai";
+const REPO = getArg("--repo") || process.env.REPO || "pydantic/pydantic-harness";
+const CODE_REPO = getArg("--code-repo") || process.env.CODE_REPO || "pydantic/pydantic-ai";
 const MODEL_A = getArg("--model-a") || process.env.MODEL_A || "anthropic/claude-opus-4-6";
 const MODEL_B = getArg("--model-b") || process.env.MODEL_B || "openai/gpt-4.1";
 const CWD = getArg("--cwd") || process.env.CWD || process.cwd();
@@ -270,7 +271,7 @@ function llmComplete(model, systemPrompt, userMessage) {
 // ─── Prompts (shared with interactive extension) ─────────────────────────────
 
 import {
-	CODEBASE_RESEARCH_PROMPT,
+	getCodebaseResearchPrompt,
 	getCompetitiveAnalysisPrompt,
 	PLAN_GENERATION_PROMPT,
 	REVIEW_PROMPT,
@@ -300,8 +301,8 @@ async function main() {
 	const cap = `${root.title}\n\n${root.body}`;
 
 	const researchResults = await runConcurrent([
-		{ label: `${MODEL_A} — codebase`, model: MODEL_A, task: `${CODEBASE_RESEARCH_PROMPT}\n\n${fullContext}` },
-		{ label: `${MODEL_B} — codebase`, model: MODEL_B, task: `${CODEBASE_RESEARCH_PROMPT}\n\n${fullContext}` },
+		{ label: `${MODEL_A} — codebase`, model: MODEL_A, task: `${getCodebaseResearchPrompt(CODE_REPO)}\n\n${fullContext}` },
+		{ label: `${MODEL_B} — codebase`, model: MODEL_B, task: `${getCodebaseResearchPrompt(CODE_REPO)}\n\n${fullContext}` },
 		{ label: `${MODEL_A} — competitive`, model: MODEL_A, task: `${COMPETITIVE_ANALYSIS_PROMPT}\n\n## Issue\n\n${cap}\n\n## Full Context\n\n${fullContext}` },
 		{ label: `${MODEL_B} — competitive`, model: MODEL_B, task: `${COMPETITIVE_ANALYSIS_PROMPT}\n\n## Issue\n\n${cap}\n\n## Full Context\n\n${fullContext}` },
 	]);

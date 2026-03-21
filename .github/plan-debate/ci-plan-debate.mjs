@@ -297,21 +297,20 @@ Investigation strategy:
 
 Output: ## Relevant Code, ## Type System & Interfaces, ## Call Chains, ## Test Coverage, ## Documentation, ## Constraints Found — each with citations.`;
 
-const COMPETITIVE_ANALYSIS_PROMPT = `You are researching how competing agent frameworks implement a capability described in a GitHub issue.
-
-Look at SOURCE CODE only. Do not fetch docs pages, blog posts, or tutorials.
+const COMPETITIVE_ANALYSIS_PROMPT = `You are researching how competing agent/LLM frameworks implement a capability described in a GitHub issue.
 
 Tools:
+  node ${WEB_SEARCH_SCRIPT} search "query"
+  node ${WEB_SEARCH_SCRIPT} gh-search-repos "query" --max 10
   node ${WEB_SEARCH_SCRIPT} gh-search-code "keyword" --repo owner/repo --max 10
   node ${WEB_SEARCH_SCRIPT} gh-file owner/repo path/to/file.py
 
-Pick the 3 most relevant frameworks for THIS capability from:
-- LangGraph (langchain-ai/langgraph), CrewAI (crewAIInc/crewAI), AutoGen (microsoft/autogen)
-- Mastra (mastra-ai/mastra), LlamaIndex (run-llama/llama_index), Semantic Kernel (microsoft/semantic-kernel)
+Process:
+1. DISCOVER: Search for frameworks that implement this capability. Use search and gh-search-repos with keywords from the issue.
+2. PICK 3: Choose the 3 most relevant. Explain why.
+3. DEEP DIVE: For each, search their repo, fetch 2-3 source files, read the implementation. Source code only — no docs pages.
 
-For each chosen framework: search for relevant code, fetch 2-3 source files, read the implementation. Note if they don't support it. Do NOT guess at APIs.
-
-Output per framework: Supports? Implementation (cite paths). Code snippets. Gaps. Then: common patterns and what Pydantic AI should consider.`;
+Output: Discovery (what you searched, what you found, why you picked these 3). Per framework: Repo, Supports?, Implementation (cite paths), Code snippets, Gaps. Then: common patterns and what Pydantic AI should consider.`;
 
 const PLAN_GENERATION_PROMPT = `You are a senior software engineer writing an implementation plan for a GitHub issue in Pydantic AI.
 

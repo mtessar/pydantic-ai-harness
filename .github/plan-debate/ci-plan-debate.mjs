@@ -267,69 +267,17 @@ function llmComplete(model, systemPrompt, userMessage) {
 	});
 }
 
-// ─── Prompts (same as extension, but inlined) ────────────────────────────────
+// ─── Prompts (shared with interactive extension) ─────────────────────────────
 
-const CODEBASE_RESEARCH_PROMPT = `You are a senior software engineer doing a deep-dive investigation of a codebase for an implementation plan.
+import {
+	CODEBASE_RESEARCH_PROMPT,
+	getCompetitiveAnalysisPrompt,
+	PLAN_GENERATION_PROMPT,
+	REVIEW_PROMPT,
+	CONSOLIDATION_PROMPT,
+} from "./prompts.mjs";
 
-You have a web search helper for fetching external resources:
-
-  node ${WEB_SEARCH_SCRIPT} fetch "https://some-docs-url.com/page"
-  node ${WEB_SEARCH_SCRIPT} gh-readme owner/repo
-  node ${WEB_SEARCH_SCRIPT} gh-file owner/repo path/to/file.py
-
-You have been given an issue with its full discussion context (including all linked issues, PRs, and comments).
-Your job: exhaustively investigate the codebase to gather every fact that could be relevant.
-
-CRITICAL RULES:
-- For EVERY claim you make, include a citation: file path + line number, or a URL.
-- Do NOT guess or assume. If you're not sure, say "NOT VERIFIED".
-- Read actual code. Trace actual call chains. Check actual tests.
-- Do NOT propose solutions. Only gather facts.
-
-Investigation strategy:
-1. Start from the entry points mentioned in the issue
-2. grep/find to locate all relevant code
-3. Read key files — the actual implementation
-4. Trace imports and dependencies
-5. Find ALL test files for the relevant code
-6. Check docs/ for documentation of the feature area
-7. Look for TODOs, FIXMEs referencing this issue
-
-Output: ## Relevant Code, ## Type System & Interfaces, ## Call Chains, ## Test Coverage, ## Documentation, ## Constraints Found — each with citations.`;
-
-const COMPETITIVE_ANALYSIS_PROMPT = `You are researching how competing agent/LLM frameworks implement a capability described in a GitHub issue.
-
-Tools:
-  node ${WEB_SEARCH_SCRIPT} search "query"
-  node ${WEB_SEARCH_SCRIPT} gh-search-repos "query" --max 10
-  node ${WEB_SEARCH_SCRIPT} gh-search-code "keyword" --repo owner/repo --max 10
-  node ${WEB_SEARCH_SCRIPT} gh-file owner/repo path/to/file.py
-
-Process:
-1. DISCOVER: Search for frameworks that implement this capability. Use search and gh-search-repos with keywords from the issue.
-2. PICK 3: Choose the 3 most relevant. Explain why.
-3. DEEP DIVE: For each, search their repo, fetch 2-3 source files, read the implementation. Source code only — no docs pages.
-
-Output: Discovery (what you searched, what you found, why you picked these 3). Per framework: Repo, Supports?, Implementation (cite paths), Code snippets, Gaps. Then: common patterns and what Pydantic AI should consider.`;
-
-const PLAN_GENERATION_PROMPT = `You are a senior software engineer writing an implementation plan for a GitHub issue in Pydantic AI.
-
-CRITICAL RULES:
-- EVERY claim must have a citation: file path + line number, GitHub URL, or doc URL
-- No filler. No "this will improve the developer experience." Just facts and steps.
-- Call out what you are NOT sure about
-
-Output: ## Goal, ## Prior Art & Competitive Landscape, ## Approach, ## Implementation Steps (with file paths and code snippets), ## Files to Modify, ## New Files, ## Test Plan, ## Documentation Changes, ## Risks and Pitfalls, ## Open Questions, ## References.`;
-
-const REVIEW_PROMPT = `You are reviewing an implementation plan for Pydantic AI. Find gaps, hallucinated facts, wrong assumptions, missed edge cases. Verify citations. Do not praise — only identify problems.
-
-For each issue: WHAT is wrong, WHERE in the plan, WHY it matters (cite evidence), HOW to fix it.
-
-End with: SATISFIED (minor nits only) or NOT SATISFIED (material issues found).`;
-
-const CONSOLIDATION_PROMPT = `Produce the final consolidated implementation plan from two reviewed plans. Take strongest elements from each. Every claim must have a citation. Zero filler.
-
-Use format: ## Goal, ## Prior Art, ## Approach, ## Implementation Steps, ## Files, ## Tests, ## Docs, ## Risks, ## Open Questions, ## References.`;
+const COMPETITIVE_ANALYSIS_PROMPT = getCompetitiveAnalysisPrompt(WEB_SEARCH_SCRIPT);
 
 // ─── Main Pipeline ───────────────────────────────────────────────────────────
 

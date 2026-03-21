@@ -1,0 +1,175 @@
+# Dual-model plan debate for pydantic-ai issues.
+#
+# Runs in pydantic-harness but researches against pydantic-ai codebase.
+#
+# Triggers:
+#   - Manual dispatch with issue number
+#   - Issue comment "/plan-debate" (on pydantic-harness issues that reference pydantic-ai issues)
+#
+# Required secrets:
+#   ANTHROPIC_API_KEY — for Claude
+#   OPENAI_API_KEY   — for GPT
+
+name: Plan Debate
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "pydantic-ai issue number"
+        required: true
+        type: number
+      model_a:
+        description: "First model (provider/id)"
+        required: false
+        default: "anthropic/claude-opus-4-6"
+        type: string
+      model_b:
+        description: "Second model (provider/id)"
+        required: false
+        default: "openai/gpt-4.1"
+        type: string
+      issue_repo:
+        description: "Repo to fetch issue from"
+        required: false
+        default: "pydantic/pydantic-ai"
+        type: string
+
+  issue_comment:
+    types: [created]
+
+jobs:
+  plan-debate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    # Run on:
+    #   - workflow_dispatch (always)
+    #   - issue comment starting with "/plan-debate <number>"
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/plan-debate'))
+
+    steps:
+      - name: Checkout pydantic-harness (for scripts)
+        uses: actions/checkout@v4
+
+      - name: Checkout pydantic-ai (for codebase research)
+        uses: actions/checkout@v4
+        with:
+          repository: pydantic/pydantic-ai
+          path: pydantic-ai
+          # Uses GITHUB_TOKEN — works for public repos. For private, add a PAT.
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install pi
+        run: npm install -g @mariozechner/pi-coding-agent
+
+      - name: Determine inputs
+        id: inputs
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "issue=${{ inputs.issue_number }}" >> $GITHUB_OUTPUT
+            echo "model_a=${{ inputs.model_a }}" >> $GITHUB_OUTPUT
+            echo "model_b=${{ inputs.model_b }}" >> $GITHUB_OUTPUT
+            echo "repo=${{ inputs.issue_repo }}" >> $GITHUB_OUTPUT
+          else
+            # Parse "/plan-debate 1234" or "/plan-debate 1234 --repo owner/repo"
+            COMMENT="${{ github.event.comment.body }}"
+            ISSUE_NUM=$(echo "$COMMENT" | grep -oE '/plan-debate\s+([0-9]+)' | grep -oE '[0-9]+')
+            if [ -z "$ISSUE_NUM" ]; then
+              echo "::error::Could not parse issue number from comment: $COMMENT"
+              exit 1
+            fi
+            echo "issue=$ISSUE_NUM" >> $GITHUB_OUTPUT
+            echo "model_a=anthropic/claude-opus-4-6" >> $GITHUB_OUTPUT
+            echo "model_b=openai/gpt-4.1" >> $GITHUB_OUTPUT
+            echo "repo=pydantic/pydantic-ai" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Acknowledge comment
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
+
+      - name: Configure git
+        working-directory: pydantic-ai
+        run: |
+          git config user.name "plan-debate[bot]"
+          git config user.email "plan-debate[bot]@users.noreply.github.com"
+
+      - name: Run plan debate
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .github/plan-debate/ci-plan-debate.mjs \
+            --issue ${{ steps.inputs.outputs.issue }} \
+            --repo ${{ steps.inputs.outputs.repo }} \
+            --model-a "${{ steps.inputs.outputs.model_a }}" \
+            --model-b "${{ steps.inputs.outputs.model_b }}" \
+            --cwd ${{ github.workspace }}/pydantic-ai \
+            --skip-pr
+
+      - name: Create PR on pydantic-ai
+        working-directory: pydantic-ai
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ISSUE_NUM=${{ steps.inputs.outputs.issue }}
+          BRANCH="plan/issue-${ISSUE_NUM}"
+
+          git checkout -b "$BRANCH"
+          git add PLAN.md
+          git commit -m "Add implementation plan for issue #${ISSUE_NUM}"
+          git push -u origin "$BRANCH"
+
+          gh pr create \
+            --draft \
+            --title "Plan: Issue #${ISSUE_NUM}" \
+            --body "Implementation plan generated via dual-model debate (${{ steps.inputs.outputs.model_a }} + ${{ steps.inputs.outputs.model_b }}).
+
+          Closes #${ISSUE_NUM}
+
+          _Triggered from [pydantic-harness](https://github.com/pydantic/pydantic-harness)._" \
+            --head "$BRANCH" \
+            --repo ${{ steps.inputs.outputs.repo }}
+
+      - name: Comment on issue (success)
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('pydantic-ai/PLAN.md', 'utf-8');
+            const preview = plan.slice(0, 3000) + (plan.length > 3000 ? '\n\n...[see PR for full plan]' : '');
+            await github.rest.issues.createComment({
+              owner: 'pydantic',
+              repo: 'pydantic-ai',
+              issue_number: ${{ steps.inputs.outputs.issue }},
+              body: `## 🤖 Plan debate complete\n\nA draft PR has been created with the implementation plan.\n\n<details>\n<summary>Plan preview</summary>\n\n${preview}\n\n</details>`
+            });
+
+      - name: Comment on issue (failure)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: 'pydantic',
+              repo: 'pydantic-ai',
+              issue_number: ${{ steps.inputs.outputs.issue }},
+              body: '## ❌ Plan debate failed\n\nSee [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for details.'
+            });

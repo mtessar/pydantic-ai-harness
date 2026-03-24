@@ -1888,3 +1888,318 @@ async def test_local_grep_skips_hidden_files_in_hidden_dirs(tmp_path: Path):
     result = await env.grep('findme')
     assert 'visible.txt' in result
     assert '.hidden' not in result
+
+
+# --- Base class run_python tests ---
+
+
+async def test_base_run_python_success():
+    """Base ExecutionEnvironment.run_python writes code to file and runs via shell."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ShellEnv(BaseEnv):
+        """Env that records write_file/shell calls and returns canned results."""
+
+        written: dict[str, str | bytes] = {}
+
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'shell', 'write_file', 'run_python'})  # pragma: no cover
+
+        async def write_file(self, path: str, content: str | bytes) -> None:
+            self.written[path] = content
+
+        async def shell(
+            self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
+        ) -> ExecutionResult:
+            return ExecutionResult(output='hello world\n', exit_code=0)
+
+    env = _ShellEnv()
+    result = await env.run_python('print("hello world")')
+    assert result == 'hello world\n'
+    assert env.written['/tmp/_pydantic_ai_code.py'] == 'print("hello world")'
+
+
+async def test_base_run_python_error():
+    """Base ExecutionEnvironment.run_python raises CodeRuntimeError on non-zero exit."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+    from pydantic_harness.toolsets.code_execution._abstract import CodeRuntimeError
+
+    class _ShellEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'shell', 'write_file', 'run_python'})  # pragma: no cover
+
+        async def write_file(self, path: str, content: str | bytes) -> None:
+            pass
+
+        async def shell(
+            self, command: str, *, timeout: float | None = 120, env: dict[str, str] | None = None
+        ) -> ExecutionResult:
+            return ExecutionResult(output='Exception: fail\n', exit_code=1)
+
+    env = _ShellEnv()
+    with pytest.raises(CodeRuntimeError, match='Exception: fail'):
+        await env.run_python('raise Exception("fail")')
+
+
+# --- Local environment additional tests ---
+
+
+async def test_local_execute_output_truncation(tmp_path: Path):
+    """LocalEnvironment.execute truncates long output."""
+    script = tmp_path / 'big.py'
+    script.write_text("print('x' * 200000)")
+    env = LocalEnvironment(tmp_path)
+    result = await env.shell(f'python3 {script}')
+    assert result.truncated is True
+    assert len(result.output) == 100_000
+
+
+async def test_local_process_wait_no_timeout(tmp_path: Path):
+    """LocalEnvironmentProcess.wait without timeout."""
+    env = LocalEnvironment(tmp_path)
+    proc = await env.create_process('true')
+    async with proc:
+        exit_code = await proc.wait()  # no timeout
+        assert exit_code == 0
+
+
+# --- Memory environment additional tests ---
+
+
+async def test_memory_normalize_leading_slash_in_constructor():
+    """MemoryEnvironment normalizes paths with leading /."""
+    env = MemoryEnvironment(files={'/abs/path.txt': 'content'})
+    content = await env.read_file('abs/path.txt')
+    assert isinstance(content, str)
+    assert 'content' in content
+
+
+async def test_memory_read_file_directory_error():
+    """MemoryEnvironment.read_file raises on directory paths."""
+    env = MemoryEnvironment(files={'dir/file.txt': 'content'})
+    with pytest.raises(FileNotFoundError, match='directory'):
+        await env.read_file('dir')
+
+
+async def test_memory_read_file_bytes_not_found_raises_error():
+    """MemoryEnvironment.read_file raises on missing file."""
+    env = MemoryEnvironment()
+    with pytest.raises(FileNotFoundError):
+        await env.read_file('missing.txt')
+
+
+async def test_memory_ls_non_root_directory():
+    """MemoryEnvironment.ls lists files in a subdirectory."""
+    env = MemoryEnvironment(files={'sub/a.txt': 'a', 'sub/b.txt': 'b', 'other.txt': 'c'})
+    entries = await env.ls('sub')
+    assert len(entries) == 2
+    names = {e.name for e in entries}
+    assert names == {'a.txt', 'b.txt'}
+
+
+async def test_memory_ls_with_subdirs():
+    """MemoryEnvironment.ls shows directories in listing."""
+    env = MemoryEnvironment(files={'dir/sub/file.txt': 'content'})
+    entries = await env.ls('dir')
+    assert len(entries) == 1
+    assert entries[0].name == 'sub'
+    assert entries[0].is_dir is True
+
+
+async def test_memory_ls_skips_non_children():
+    """MemoryEnvironment.ls skips files not under the directory."""
+    env = MemoryEnvironment(files={'a/b.txt': 'x', 'c/d.txt': 'y'})
+    entries = await env.ls('a')
+    assert len(entries) == 1
+    assert entries[0].name == 'b.txt'
+
+
+async def test_memory_grep_binary_skip():
+    """MemoryEnvironment.grep skips binary files."""
+    env = MemoryEnvironment(files={'binary.bin': b'\x00binary data', 'text.txt': 'findme'})
+    result = await env.grep('findme')
+    assert 'text.txt' in result
+    assert 'binary' not in result
+
+
+async def test_memory_grep_path_filter():
+    """MemoryEnvironment.grep filters by exact file path."""
+    env = MemoryEnvironment(files={'sub/target.py': 'match_here', 'other.py': 'match_here'})
+    result = await env.grep('match_here', path='sub')
+    assert 'sub/target.py' in result
+    assert 'other.py' not in result
+
+
+async def test_memory_glob_in_subdirectory_with_path_filter():
+    """MemoryEnvironment.glob works with path parameter."""
+    env = MemoryEnvironment(files={'src/a.py': 'a', 'src/b.txt': 'b', 'other.py': 'c'})
+    matches = await env.glob('*.py', path='src')
+    assert 'src/a.py' in matches
+    assert 'other.py' not in matches
+
+
+async def test_memory_normalize_absolute_path():
+    """MemoryEnvironment._normalize strips leading /."""
+    env = MemoryEnvironment(files={'path.txt': 'content'})
+    normalized = env._normalize('/path.txt')
+    assert normalized == 'path.txt'
+
+
+async def test_memory_read_file_that_is_also_directory_prefix():
+    """MemoryEnvironment.read_file when path exists as both file and directory prefix."""
+    env = MemoryEnvironment(files={'dir': 'I am a file', 'dir/child.txt': 'child content'})
+    async with env:
+        content = await env.read_file('dir')
+        assert isinstance(content, str)
+        assert 'I am a file' in content
+
+
+async def test_memory_read_image_stored_as_string():
+    """MemoryEnvironment returns bytes for image files even when stored as a string."""
+    env = MemoryEnvironment(files={'image.png': 'fake png data'})
+    async with env:
+        result = await env.read_file('image.png')
+    assert isinstance(result, bytes)
+    assert result == b'fake png data'
+
+
+# --- ExecutionEnvironmentToolset resolution tests ---
+
+
+def test_resolve_edit_tool_explicit_strategy():
+    """Passing edit_strategy to constructor overrides auto-detection."""
+    env = MemoryEnvironment()
+    toolset = ExecutionEnvironmentToolset(env, edit_strategy='apply_patch')
+    strategy = toolset._resolve_edit_tool(env)
+    assert strategy == 'apply_patch'
+
+
+def test_resolve_edit_tool_apply_patch_fallback():
+    """When env has apply_patch but not replace_str, resolves to apply_patch."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ApplyPatchEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'apply_patch'})
+
+    toolset = ExecutionEnvironmentToolset(_ApplyPatchEnv())
+    strategy = toolset._resolve_edit_tool(_ApplyPatchEnv())
+    assert strategy == 'apply_patch'
+
+
+def test_resolve_edit_tool_neither():
+    """When env has neither replace_str nor apply_patch, returns None."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _NoEditEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+    toolset = ExecutionEnvironmentToolset(_NoEditEnv())
+    strategy = toolset._resolve_edit_tool(_NoEditEnv())
+    assert strategy is None
+
+
+def test_resolve_capabilities_with_run_code_with_functions():
+    """Env with run_python_with_functions maps to run_code_with_functions capability."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _FunctionsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'run_python_with_functions'})
+
+    toolset = ExecutionEnvironmentToolset(
+        _FunctionsEnv(),
+        exclude=frozenset(),  # don't exclude run_code
+    )
+    caps = toolset._resolve_capabilities(_FunctionsEnv())
+    assert 'run_code_with_functions' in caps
+
+
+# --- Toolset ls formatting tests ---
+
+
+async def test_toolset_ls_formats_dirs():
+    """Toolset ls formats directory entries with trailing /."""
+    env = MemoryEnvironment(files={'sub/a.txt': 'hello'})
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    async with env:
+        result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert 'sub/' in str(result)
+
+
+async def test_toolset_ls_error_handling():
+    """Toolset ls returns error string when environment raises."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _ErrorLsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            raise NotADirectoryError(f'Not a directory: {path}')
+
+    env = _ErrorLsEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '/bad'}, ctx, tools['ls'])
+    assert 'Error:' in str(result)
+
+
+async def test_toolset_ls_formats_files_without_size():
+    """Toolset ls formats file entries without size (just the name)."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _NoSizeEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            return [FileInfo(name='readme.txt', path='readme.txt', is_dir=False, size=None)]
+
+    env = _NoSizeEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert str(result) == 'readme.txt'
+
+
+async def test_toolset_ls_empty_directory():
+    """Toolset ls returns 'Empty directory.' for empty listings."""
+    from pydantic_harness.environments._base import Capability as EnvCapability, ExecutionEnvironment as BaseEnv
+
+    class _EmptyLsEnv(BaseEnv):
+        @property
+        def capabilities(self) -> frozenset[EnvCapability]:
+            return frozenset({'ls'})
+
+        async def ls(self, path: str = '.') -> list[FileInfo]:
+            return []
+
+    env = _EmptyLsEnv()
+    toolset = ExecutionEnvironmentToolset(env)
+    ctx = build_run_context()
+    tools = await toolset.get_tools(ctx)
+    result = await toolset.call_tool('ls', {'path': '.'}, ctx, tools['ls'])
+    assert str(result) == 'Empty directory.'
+
+
+# --- Lazy import test ---
+
+
+def test_lazy_import_code_execution_toolset():
+    """CodeExecutionToolset is importable via pydantic_harness.toolsets."""
+    from pydantic_harness.toolsets import CodeExecutionToolset
+
+    assert CodeExecutionToolset is not None

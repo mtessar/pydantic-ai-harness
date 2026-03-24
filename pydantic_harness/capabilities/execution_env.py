@@ -61,6 +61,9 @@ class ExecutionEnv(AbstractCapability[AgentDepsT]):
     image_support: bool = True
     """Whether read_file returns images as BinaryContent."""
 
+    max_image_bytes: int = 50 * 1024 * 1024
+    """Maximum image file size in bytes to return as BinaryContent."""
+
     max_retries: int = 1
     """Maximum retries per tool call."""
 
@@ -78,5 +81,6 @@ class ExecutionEnv(AbstractCapability[AgentDepsT]):
             require_shell_approval=self.require_shell_approval,
             require_write_approval=self.require_write_approval,
             image_support=self.image_support,
+            max_image_bytes=self.max_image_bytes,
             max_retries=self.max_retries,
         )

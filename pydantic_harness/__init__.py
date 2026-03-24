@@ -10,7 +10,12 @@ from pydantic_harness.environments._base import (
 )
 from pydantic_harness.toolsets.code_execution import (
     CodeExecutionToolset,
+    DescriptionFunc,
+    EnvironmentName,
+    FunctionSignature,
+    TypeSignature,
     build_default_description,
+    get_environment,
 )
 from pydantic_harness.toolsets.code_execution._abstract import (
     CodeExecutionError,
@@ -19,6 +24,7 @@ from pydantic_harness.toolsets.code_execution._abstract import (
     CodeSyntaxError,
     CodeTypingError,
     FunctionCall,
+    FunctionCallback,
 )
 from pydantic_harness.toolsets.execution_environment import ExecutionEnvironmentToolset
 
@@ -35,11 +41,18 @@ __all__ = (
     'CodeExecutionToolset',
     'ExecutionEnvironmentToolset',
     'build_default_description',
-    # Error types
+    'get_environment',
+    # Type signatures
+    'FunctionSignature',
+    'TypeSignature',
+    'DescriptionFunc',
+    'EnvironmentName',
+    # Error types & callbacks
     'CodeExecutionError',
     'CodeExecutionTimeout',
     'CodeRuntimeError',
     'CodeSyntaxError',
     'CodeTypingError',
     'FunctionCall',
+    'FunctionCallback',
 )

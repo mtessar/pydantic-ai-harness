@@ -1,13 +1,14 @@
 # Pending Issues — pydantic-harness
 
-Status as of 2026-03-24. Test suite: **437 passed, 12 failed**.
+Status as of 2026-03-24. Test suite: **627 passed, 75 failed, 6 xfailed** (708 total collected).
+Asyncio-only: **396 passed, 3 failed, 3 xfailed** (all 3 failures are known pre-existing issues).
 
 ---
 
 ## 1. PR #4755 Dependency — `python_signature` on `ToolsetTool` / `FunctionToolDefinition`
 
 **Upstream PR**: https://github.com/pydantic/pydantic-ai/pull/4755
-**Impact**: 4 test failures + degraded signature quality for wrapped tools
+**Impact**: 4 test failures + 2 xfailed + 4 removed tests + degraded signature quality for wrapped tools
 
 ### What's affected
 
@@ -43,6 +44,13 @@ behaves differently.
 | `test_restart_syntax_error_raises_model_retry[asyncio]` | StubEnvironment `type_check()` path differs without `python_signature` on ToolsetTool |
 | `test_restart_syntax_error_raises_model_retry[trio]` | Same |
 
+### xfailed tests (marked with `@pytest.mark.xfail`)
+
+| Test | Reason |
+|---|---|
+| `test_generated_signatures_are_valid_python` | `schema_to_signature` returns `-> Any` instead of `-> int` |
+| `test_full_description_snapshot` | Description differs because `schema_to_signature` produces different type signatures |
+
 ### Also removed from tests
 
 3 test functions in `test_python_signature.py` were removed because they directly
@@ -61,13 +69,14 @@ When PR #4755 merges into pydantic-ai-slim:
 2. Switch all imports to `from pydantic_ai._python_signature import ...`
 3. Restore the `wrapped_tools[name].python_signature` call in `CodeExecutionToolset`
 4. Re-add the 4 removed test functions
-5. The 4 failing tests should pass
+5. Remove the 2 `@pytest.mark.xfail` markers from `test_monty.py`
+6. The 4 failing + 2 xfailed tests should pass
 
 ---
 
 ## 2. Trio + MontyEnvironment Incompatibility
 
-**Impact**: 5 test failures (all under `trio` backend with `monty` environment)
+**Impact**: ~70 test failures (all under `trio` backend — monty, transport, driver, integration tests)
 
 ### What's affected
 
@@ -212,8 +221,8 @@ Review docs for import path consistency once the package API is stabilized.
 
 | # | Issue | Failures | Blocked on | Priority |
 |---|---|---|---|---|
-| 1 | PR #4755 (python_signature) | 4 + 4 removed tests | Upstream merge | High — affects signature quality |
-| 2 | Trio + Monty | 5 | Upstream monty/anyio compat | Low — asyncio works fine |
+| 1 | PR #4755 (python_signature) | 4 fail + 2 xfail + 4 removed | Upstream merge | High — affects signature quality |
+| 2 | Trio + asyncio-only code | ~70 | Upstream monty/anyio compat | Low — asyncio works fine |
 | 3 | Trio + Agent | 1 | Upstream slim trio support | Low |
 | 4 | python binary | 2 | CI environment | Low — works on most systems |
 | 5 | No Docker | 0 (tests removed) | New implementation | Medium — nice to have |

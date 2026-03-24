@@ -97,6 +97,31 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         max_retries: int = 1,
         id: str | None = None,
     ):
+        """Create a new execution environment toolset.
+
+        Args:
+            environment: The execution environment to use for tool execution.
+                Can also be set later via `use_environment()`.
+            include: Capabilities to include. `None` means all capabilities
+                from the environment (minus `run_code`). Pass an explicit set
+                to restrict to specific capabilities.
+            exclude: Capabilities to exclude. `None` defaults to `{'run_code'}`.
+                Use `frozenset()` to include all capabilities including `run_code`.
+            edit_strategy: Which edit strategy to use. `None` auto-selects
+                `'replace_str'` if supported by the environment.
+            code_language: Code execution language. `None` auto-detects
+                from the environment's capabilities (defaults to `'python'`).
+            require_shell_approval: Whether the `shell` tool requires human-in-the-loop
+                approval before execution. Recommended for `LocalEnvironment` where
+                commands run directly on the host.
+            require_write_approval: Whether `write_file` and edit tools require
+                human-in-the-loop approval before execution.
+            image_support: Whether `read_file` should return images as `BinaryContent`
+                for multimodal models (otherwise returns a placeholder message).
+            max_image_bytes: Maximum image file size to return as BinaryContent.
+            max_retries: Maximum retries per tool call.
+            id: Optional unique ID for the toolset (required for durable execution).
+        """
         super().__init__(max_retries=max_retries, id=id)
         self._default_environment = environment
         self._environment_override: ContextVar[ExecutionEnvironment | None] = ContextVar(
@@ -114,6 +139,9 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         self._running_count: int = 0
         self._exit_stack: AsyncExitStack | None = None
 
+        # Register tools based on what we know at init time.
+        # If no environment is provided, we register a full set of tools and
+        # let runtime errors catch unsupported capabilities.
         self._register_tools(environment)
 
     def _resolve_capabilities(self, env: ExecutionEnvironment | None) -> set[Capability]:
@@ -121,16 +149,21 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
         if env is not None:
             env_caps = env.capabilities
             available: set[Capability] = set()
+            # Map env capabilities back to toolset capabilities
             for cap in ('ls', 'shell', 'read_file', 'write_file', 'glob', 'grep'):
                 if cap in env_caps:
                     available.add(cap)
+            # Check for edit_file: env has replace_str or apply_patch
             if 'replace_str' in env_caps or 'apply_patch' in env_caps:
                 available.add('edit_file')
+            # Check for run_code: env has run_python or run_typescript
             if 'run_python' in env_caps or 'run_typescript' in env_caps:
                 available.add('run_code')
+            # Check for run_code_with_functions
             if 'run_python_with_functions' in env_caps or 'run_typescript_with_functions' in env_caps:
                 available.add('run_code_with_functions')
         else:
+            # No environment yet — register everything (runtime will error on unsupported)
             available = {'ls', 'shell', 'read_file', 'write_file', 'edit_file', 'glob', 'grep'}
 
         if self._include is not None:
@@ -150,6 +183,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
             if 'apply_patch' in env_caps:
                 return 'apply_patch'
             return None
+        # Default when no environment is available
         return 'replace_str'
 
     def _register_tools(self, env: ExecutionEnvironment | None) -> None:
@@ -236,6 +270,7 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
                 if isinstance(content, bytes):
                     ext = posixpath.splitext(path)[1].lower()
                     if ext in IMAGE_EXTENSIONS:
+                        # Image file — return as BinaryContent or placeholder
                         if self._image_support:
                             if len(content) > self._max_image_bytes:
                                 return (
@@ -355,7 +390,10 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     @property
     def environment(self) -> ExecutionEnvironment | None:
-        """The active execution environment, or None if not configured."""
+        """The active execution environment, or None if not configured.
+
+        Checks the context var override first, then falls back to the default.
+        """
         override = self._environment_override.get()
         if override is not None:
             return override
@@ -363,7 +401,11 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     @property
     def required_environment(self) -> ExecutionEnvironment:
-        """The active execution environment, raising if not configured."""
+        """The active execution environment, raising if not configured.
+
+        Raises:
+            RuntimeError: If no environment is available.
+        """
         env = self.environment
         if env is not None:
             return env
@@ -373,7 +415,19 @@ class ExecutionEnvironmentToolset(FunctionToolset[Any]):
 
     @contextmanager
     def use_environment(self, environment: ExecutionEnvironment) -> Iterator[None]:
-        """Override the execution environment for the current context."""
+        """Override the execution environment for the current context.
+
+        Useful for testing or using different environments at different call sites.
+
+        Usage:
+            ```python {test="skip" lint="skip"}
+            with toolset.use_environment(test_env):
+                result = await agent.run('test prompt', toolsets=[toolset])
+            ```
+
+        Args:
+            environment: The execution environment to use within this context.
+        """
         token = self._environment_override.set(environment)
         try:
             yield

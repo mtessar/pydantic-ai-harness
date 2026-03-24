@@ -1,0 +1,15 @@
+.venv
+dist
+__pycache__
+.env
+/.coverage
+.coverage*
+.DS_Store
+.cache/
+.vscode/
+**.idea/
+/test_tmp/
+/scratch/
+.mcp.json
+.pytest_cache/
+*.egg-info/

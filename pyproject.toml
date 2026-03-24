@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pydantic-harness"
+version = "0.0.1"
+description = "Execution environments and code mode capabilities for pydantic-ai"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic-ai-slim",
+    "pydantic>=2.12",
+    "anyio>=4.5.0",
+]
+
+[project.optional-dependencies]
+monty = ["pydantic-monty>=0.0.5"]
+dev = [
+    "pytest>=9.0.0",
+    "anyio[trio]>=4.5.0",
+    "pytest-mock>=3.14.0",
+    "inline-snapshot>=0.19.3",
+    "dirty-equals>=0.9.0",
+    "pydantic-monty>=0.0.5",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["pydantic_harness"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+xfail_strict = true

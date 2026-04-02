@@ -7,4 +7,16 @@ Usage:
 # Each capability module is imported and re-exported here.
 # Capabilities are listed alphabetically.
 
-__all__: list[str] = []
+from pydantic_harness.session_persistence import (
+    FileSessionStore,
+    InMemorySessionStore,
+    SessionPersistence,
+    SessionStore,
+)
+
+__all__: list[str] = [
+    'FileSessionStore',
+    'InMemorySessionStore',
+    'SessionPersistence',
+    'SessionStore',
+]

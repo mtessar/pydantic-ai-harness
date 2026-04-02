@@ -7,6 +7,7 @@ with pluggable storage backends (``InMemorySessionStore`` for testing,
 
 from __future__ import annotations
 
+import json as _json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -22,12 +23,22 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 class SessionStore(Protocol):
     """Protocol for pluggable session storage backends."""
 
-    def save(self, session_id: str, messages: list[ModelMessage]) -> None:  # pragma: no cover
-        """Persist conversation messages for the given session."""
+    def save(
+        self,
+        session_id: str,
+        messages: list[ModelMessage],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:  # pragma: no cover
+        """Persist conversation messages (and optional metadata) for the given session."""
         ...
 
     def load(self, session_id: str) -> list[ModelMessage] | None:  # pragma: no cover
         """Load conversation messages for the given session, or None if not found."""
+        ...
+
+    def load_metadata(self, session_id: str) -> dict[str, Any] | None:  # pragma: no cover
+        """Load metadata for the given session, or None if not found."""
         ...
 
     def list_sessions(self) -> list[str]:  # pragma: no cover
@@ -48,10 +59,21 @@ class InMemorySessionStore:
     def __init__(self) -> None:
         """Initialize an empty in-memory session store."""
         self._sessions: dict[str, list[ModelMessage]] = {}
+        self._metadata: dict[str, dict[str, Any]] = {}
 
-    def save(self, session_id: str, messages: list[ModelMessage]) -> None:
-        """Persist conversation messages for the given session."""
+    def save(
+        self,
+        session_id: str,
+        messages: list[ModelMessage],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist conversation messages (and optional metadata) for the given session."""
         self._sessions[session_id] = list(messages)
+        if metadata is not None:
+            self._metadata[session_id] = dict(metadata)
+        else:
+            self._metadata.pop(session_id, None)
 
     def load(self, session_id: str) -> list[ModelMessage] | None:
         """Load conversation messages for the given session."""
@@ -60,12 +82,20 @@ class InMemorySessionStore:
             return None
         return list(messages)
 
+    def load_metadata(self, session_id: str) -> dict[str, Any] | None:
+        """Load metadata for the given session."""
+        meta = self._metadata.get(session_id)
+        if meta is None:
+            return None
+        return dict(meta)
+
     def list_sessions(self) -> list[str]:
         """Return all stored session IDs."""
         return list(self._sessions)
 
     def delete(self, session_id: str) -> bool:
         """Delete a session by ID."""
+        self._metadata.pop(session_id, None)
         return self._sessions.pop(session_id, None) is not None
 
 
@@ -88,11 +118,26 @@ class FileSessionStore:
     def _path_for(self, session_id: str) -> Path:
         return self._directory / f'{session_id}.json'
 
-    def save(self, session_id: str, messages: list[ModelMessage]) -> None:
-        """Persist conversation messages as a JSON file."""
+    def _meta_path_for(self, session_id: str) -> Path:
+        return self._directory / f'{session_id}.meta.json'
+
+    def save(
+        self,
+        session_id: str,
+        messages: list[ModelMessage],
+        *,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Persist conversation messages (and optional metadata) as JSON files."""
         self._directory.mkdir(parents=True, exist_ok=True)
         data = ModelMessagesTypeAdapter.dump_json(messages)
         self._path_for(session_id).write_bytes(data)
+
+        meta_path = self._meta_path_for(session_id)
+        if metadata is not None:
+            meta_path.write_text(_json.dumps(metadata), encoding='utf-8')
+        elif meta_path.exists():
+            meta_path.unlink()
 
     def load(self, session_id: str) -> list[ModelMessage] | None:
         """Load conversation messages from a JSON file."""
@@ -102,19 +147,31 @@ class FileSessionStore:
         data = path.read_bytes()
         return ModelMessagesTypeAdapter.validate_json(data)
 
+    def load_metadata(self, session_id: str) -> dict[str, Any] | None:
+        """Load metadata from a JSON file."""
+        meta_path = self._meta_path_for(session_id)
+        if not meta_path.exists():
+            return None
+        raw = meta_path.read_text(encoding='utf-8')
+        result: dict[str, Any] = _json.loads(raw)
+        return result
+
     def list_sessions(self) -> list[str]:
         """Return all session IDs found in the directory."""
         if not self._directory.exists():
             return []
-        return sorted(p.stem for p in self._directory.glob('*.json'))
+        return sorted(p.stem for p in self._directory.glob('*.json') if not p.name.endswith('.meta.json'))
 
     def delete(self, session_id: str) -> bool:
-        """Delete a session file. Returns True if it existed."""
+        """Delete a session file and its metadata. Returns True if it existed."""
         path = self._path_for(session_id)
-        if path.exists():
+        existed = path.exists()
+        if existed:
             path.unlink()
-            return True
-        return False
+        meta_path = self._meta_path_for(session_id)
+        if meta_path.exists():
+            meta_path.unlink()
+        return existed
 
 
 @dataclass
@@ -150,6 +207,13 @@ class SessionPersistence(AbstractCapability[AgentDepsT]):
     auto_save: bool = True
     """Whether to automatically save messages after each run."""
 
+    metadata: dict[str, Any] | None = None
+    """Optional metadata to store alongside the session messages.
+
+    When set, this dict is persisted on each save and can be retrieved
+    via ``store.load_metadata(session_id)``.
+    """
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         """Return the name used for spec serialization."""
@@ -184,7 +248,7 @@ class SessionPersistence(AbstractCapability[AgentDepsT]):
     ) -> AgentRunResult[Any]:
         """Save the full message history after a successful run."""
         if self.auto_save:
-            self.store.save(self.session_id, result.all_messages())
+            self.store.save(self.session_id, result.all_messages(), metadata=self.metadata)
         return result
 
 

@@ -142,6 +142,36 @@ class TestInMemorySessionStore:
         assert reloaded is not None
         assert len(reloaded) == 1
 
+    def test_save_with_metadata(self) -> None:
+        store = InMemorySessionStore()
+        store.save('s1', [_user('hi')], metadata={'agent': 'test'})
+        meta = store.load_metadata('s1')
+        assert meta == {'agent': 'test'}
+
+    def test_save_without_metadata_clears_existing(self) -> None:
+        store = InMemorySessionStore()
+        store.save('s1', [_user('hi')], metadata={'key': 'val'})
+        store.save('s1', [_user('hi')])
+        assert store.load_metadata('s1') is None
+
+    def test_load_metadata_nonexistent(self) -> None:
+        store = InMemorySessionStore()
+        assert store.load_metadata('missing') is None
+
+    def test_load_metadata_returns_copy(self) -> None:
+        store = InMemorySessionStore()
+        store.save('s1', [_user('hi')], metadata={'key': 'val'})
+        meta = store.load_metadata('s1')
+        assert meta is not None
+        meta['extra'] = 'added'
+        assert store.load_metadata('s1') == {'key': 'val'}
+
+    def test_delete_also_removes_metadata(self) -> None:
+        store = InMemorySessionStore()
+        store.save('s1', [_user('hi')], metadata={'key': 'val'})
+        store.delete('s1')
+        assert store.load_metadata('s1') is None
+
 
 # ---------------------------------------------------------------------------
 # FileSessionStore
@@ -201,6 +231,40 @@ class TestFileSessionStore:
     def test_delete_nonexistent(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
         assert store.delete('missing') is False
+
+    def test_save_with_metadata(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        store.save('s1', [_user('hi')], metadata={'model': 'gpt-5', 'version': 2})
+        meta = store.load_metadata('s1')
+        assert meta == {'model': 'gpt-5', 'version': 2}
+        # Verify the file exists
+        assert (tmp_path / 's1.meta.json').exists()
+
+    def test_save_without_metadata_removes_meta_file(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        store.save('s1', [_user('hi')], metadata={'key': 'val'})
+        assert (tmp_path / 's1.meta.json').exists()
+        store.save('s1', [_user('hi')])
+        assert not (tmp_path / 's1.meta.json').exists()
+        assert store.load_metadata('s1') is None
+
+    def test_load_metadata_nonexistent(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        assert store.load_metadata('missing') is None
+
+    def test_delete_also_removes_metadata(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        store.save('s1', [_user('hi')], metadata={'key': 'val'})
+        store.delete('s1')
+        assert not (tmp_path / 's1.meta.json').exists()
+        assert store.load_metadata('s1') is None
+
+    def test_list_sessions_excludes_meta_files(self, tmp_path: Path) -> None:
+        store = FileSessionStore(tmp_path)
+        store.save('alpha', [_user('x')], metadata={'tag': 'a'})
+        store.save('beta', [_user('y')])
+        sessions = store.list_sessions()
+        assert sessions == ['alpha', 'beta']
 
     def test_roundtrip_preserves_content(self, tmp_path: Path) -> None:
         store = FileSessionStore(tmp_path)
@@ -323,6 +387,27 @@ class TestSessionPersistence:
     def test_from_spec_file_backend(self, tmp_path: Path) -> None:
         cap = SessionPersistence.from_spec(backend='file', directory=str(tmp_path))
         assert isinstance(cap.store, FileSessionStore)
+
+    @pytest.mark.anyio
+    async def test_after_run_saves_metadata(self) -> None:
+        store = InMemorySessionStore()
+        cap = SessionPersistence(store=store, session_id='s1', metadata={'run': 'first'})
+        messages: list[ModelMessage] = [_user('hello'), _assistant('hi')]
+        result = _make_result(messages, output='hi')
+        ctx = _make_ctx()
+        await cap.after_run(ctx, result=result)
+        meta = store.load_metadata('s1')
+        assert meta == {'run': 'first'}
+
+    @pytest.mark.anyio
+    async def test_after_run_no_metadata_by_default(self) -> None:
+        store = InMemorySessionStore()
+        cap = SessionPersistence(store=store, session_id='s1')
+        messages: list[ModelMessage] = [_user('hello'), _assistant('hi')]
+        result = _make_result(messages, output='hi')
+        ctx = _make_ctx()
+        await cap.after_run(ctx, result=result)
+        assert store.load_metadata('s1') is None
 
     @pytest.mark.anyio
     async def test_with_file_store_roundtrip(self, tmp_path: Path) -> None:

@@ -7,4 +7,12 @@ Usage:
 # Each capability module is imported and re-exported here.
 # Capabilities are listed alphabetically.
 
-__all__: list[str] = []
+from pydantic_harness.memory import FileStore, InMemoryStore, Memory, MemoryEntry, MemoryStore
+
+__all__: list[str] = [
+    'FileStore',
+    'InMemoryStore',
+    'Memory',
+    'MemoryEntry',
+    'MemoryStore',
+]

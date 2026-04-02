@@ -1,0 +1,51 @@
+# Memory Capability
+
+## Summary
+
+Implements a `Memory` capability (`AbstractCapability` subclass) that provides persistent key-value memory across agent sessions, referencing issues #30 and #31.
+
+## Design
+
+### Architecture
+
+- **`Memory`** dataclass extends `AbstractCapability[AgentDepsT]`
+  - `get_instructions()` returns a dynamic callable that injects stored memories into the system prompt at run start
+  - `get_toolset()` returns a `FunctionToolset` with five tools: `save_memory`, `recall_memory`, `search_memories`, `list_memories`, `delete_memory`
+  - Tool functions use closures over `self.store` (no dependency on agent `deps`)
+
+### Storage
+
+- **`MemoryStore`** protocol: pluggable backend with `get`, `put`, `delete`, `list_all`, `search`
+- **`InMemoryStore`**: dict-based, ephemeral, for testing (default)
+- **`FileStore`**: JSON file on disk, reads on init, writes on every mutation
+
+### Memory Model
+
+- **`MemoryEntry`** dataclass: `key`, `content`, `tags` (list[str]), `created_at`, `updated_at`
+- Search is substring-based (case-insensitive) across key, content, and tags
+
+### Spec Serialization
+
+- `Memory.get_serialization_name()` returns `"Memory"`
+- `Memory.from_spec(backend="file", path="...")` creates a `FileStore`-backed instance
+
+## Configuration
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `store` | `InMemoryStore()` | Storage backend |
+| `inject_memories_in_instructions` | `True` | Include memories in system prompt |
+| `max_instructions_memories` | `20` | Cap on memories injected into prompt |
+
+## Files
+
+- `src/pydantic_harness/memory.py` - Capability, stores, entry model
+- `src/pydantic_harness/__init__.py` - Re-exports
+- `tests/test_memory.py` - 48 tests covering all code paths
+
+## Future Work
+
+- Semantic/vector search backend (e.g. embedding-based `MemoryStore`)
+- TTL / expiration on entries
+- Session-scoped memory isolation via `for_run()`
+- SQLite / Redis backends for production persistence

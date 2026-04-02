@@ -7,4 +7,10 @@ Usage:
 # Each capability module is imported and re-exported here.
 # Capabilities are listed alphabetically.
 
-__all__: list[str] = []
+from pydantic_harness.compaction import Compaction, LimitWarner, SlidingWindow
+
+__all__: list[str] = [
+    'Compaction',
+    'LimitWarner',
+    'SlidingWindow',
+]

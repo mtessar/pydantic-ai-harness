@@ -228,6 +228,81 @@ class TestSearchFiles:
 
 
 # ---------------------------------------------------------------------------
+# create_directory
+# ---------------------------------------------------------------------------
+
+
+class TestCreateDirectory:
+    def test_create_simple(self, fs: FileSystem, tmp_root: Path) -> None:
+        result = fs.create_directory('newdir')
+        assert 'Created directory' in result
+        assert (tmp_root / 'newdir').is_dir()
+
+    def test_create_nested(self, fs: FileSystem, tmp_root: Path) -> None:
+        result = fs.create_directory('a/b/c')
+        assert 'Created directory' in result
+        assert (tmp_root / 'a' / 'b' / 'c').is_dir()
+
+    def test_create_existing(self, fs: FileSystem) -> None:
+        # Should not raise for existing directories (exist_ok=True)
+        result = fs.create_directory('sub')
+        assert 'Created directory' in result
+
+    def test_create_traversal_blocked(self, fs: FileSystem) -> None:
+        with pytest.raises(PermissionError, match='outside the root'):
+            fs.create_directory('../../escape')
+
+    def test_create_denied(self, tmp_root: Path) -> None:
+        fs = FileSystem(root_dir=tmp_root, denied_patterns=['*.secret'])
+        with pytest.raises(PermissionError, match='denied'):
+            fs.create_directory('stuff.secret')
+
+
+# ---------------------------------------------------------------------------
+# find_files
+# ---------------------------------------------------------------------------
+
+
+class TestFindFiles:
+    def test_find_by_extension(self, fs: FileSystem) -> None:
+        result = fs.find_files('*.txt')
+        assert 'hello.txt' in result
+
+    def test_find_recursive(self, fs: FileSystem) -> None:
+        result = fs.find_files('**/*.py')
+        assert 'sub/nested.py' in result
+
+    def test_find_no_match(self, fs: FileSystem) -> None:
+        result = fs.find_files('*.nonexistent')
+        assert result == 'No matches found.'
+
+    def test_find_in_subdir(self, fs: FileSystem) -> None:
+        result = fs.find_files('*.py', path='sub')
+        assert 'nested.py' in result
+
+    def test_find_not_a_directory(self, fs: FileSystem) -> None:
+        with pytest.raises(NotADirectoryError):
+            fs.find_files('*.txt', path='hello.txt')
+
+    def test_find_skips_hidden(self, fs: FileSystem, tmp_root: Path) -> None:
+        (tmp_root / '.hidden').mkdir()
+        (tmp_root / '.hidden' / 'secret.py').write_text('hidden\n')
+        result = fs.find_files('**/*.py')
+        assert '.hidden' not in result
+
+    def test_find_includes_directories(self, fs: FileSystem) -> None:
+        result = fs.find_files('sub')
+        assert 'sub/' in result
+
+    def test_find_truncation(self, tmp_root: Path) -> None:
+        for i in range(1100):
+            (tmp_root / f'file_{i:04d}.dat').write_text('')
+        fs = FileSystem(root_dir=tmp_root)
+        result = fs.find_files('*.dat')
+        assert 'truncated' in result
+
+
+# ---------------------------------------------------------------------------
 # Path filtering (allowed_patterns / denied_patterns)
 # ---------------------------------------------------------------------------
 
@@ -277,7 +352,15 @@ class TestToolset:
         toolset = fs.get_toolset()
         assert isinstance(toolset, FunctionToolset)
         tool_names = set(toolset.tools.keys())
-        assert tool_names == {'read_file', 'write_file', 'edit_file', 'list_directory', 'search_files'}
+        assert tool_names == {
+            'read_file',
+            'write_file',
+            'edit_file',
+            'list_directory',
+            'search_files',
+            'create_directory',
+            'find_files',
+        }
 
     def test_serialization_name(self) -> None:
         assert FileSystem.get_serialization_name() == 'FileSystem'

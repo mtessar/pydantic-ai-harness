@@ -1,7 +1,7 @@
 """FileSystem capability: gives agents configurable file system access.
 
-Provides tools for reading, writing, editing, listing, and searching files,
-all scoped to a configurable root directory with path filtering.
+Provides tools for reading, writing, editing, listing, searching, and finding
+files, all scoped to a configurable root directory with path filtering.
 """
 
 from __future__ import annotations
@@ -271,6 +271,47 @@ class FileSystem(AbstractCapability[Any]):
 
         return '\n'.join(results) if results else 'No matches found.'
 
+    def create_directory(self, path: str) -> str:
+        """Create a directory and any missing parents.
+
+        Args:
+            path: Directory path relative to the root directory.
+
+        Returns:
+            Confirmation message.
+        """
+        resolved = self.safe_resolve(path)
+        resolved.mkdir(parents=True, exist_ok=True)
+        return f'Created directory {path}.'
+
+    def find_files(self, pattern: str, *, path: str = '.') -> str:
+        """Find files by glob pattern (name matching, not content search).
+
+        Args:
+            pattern: Glob pattern to match file names against (e.g. ``*.py``, ``**/*.json``).
+            path: Directory to search in, relative to the root directory.
+
+        Returns:
+            Newline-separated list of matching file paths relative to the root.
+        """
+        resolved = self.safe_resolve(path)
+        if not resolved.is_dir():
+            raise NotADirectoryError(f'Not a directory: {path}')
+
+        matches: list[str] = []
+        for match in sorted(resolved.glob(pattern)):
+            rel = str(match.relative_to(self._root))
+            # Skip hidden files/directories
+            if any(part.startswith('.') for part in match.relative_to(self._root).parts):
+                continue
+            suffix = '/' if match.is_dir() else ''
+            matches.append(f'{rel}{suffix}')
+            if len(matches) > 1000:
+                matches.append('[... truncated at 1000 matches]')
+                break
+
+        return '\n'.join(matches) if matches else 'No matches found.'
+
     # ------------------------------------------------------------------
     # Capability interface
     # ------------------------------------------------------------------
@@ -283,4 +324,6 @@ class FileSystem(AbstractCapability[Any]):
         toolset.add_function(self.edit_file, name='edit_file')
         toolset.add_function(self.list_directory, name='list_directory')
         toolset.add_function(self.search_files, name='search_files')
+        toolset.add_function(self.create_directory, name='create_directory')
+        toolset.add_function(self.find_files, name='find_files')
         return toolset

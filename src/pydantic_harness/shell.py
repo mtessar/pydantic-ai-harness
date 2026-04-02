@@ -6,6 +6,7 @@ and optional command allow/deny lists.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from dataclasses import dataclass, field
@@ -25,6 +26,10 @@ class Shell(AbstractCapability[Any]):
     allow-list (``allowed_commands``) or deny-list (``denied_commands``)
     restricts which executables may be invoked.  Output is truncated to
     ``max_output_chars`` to keep model context manageable.
+
+    When ``persist_cwd`` is ``True``, the shell tracks ``cd`` commands and
+    adjusts the working directory for subsequent calls, simulating a
+    persistent shell session.
 
     Example::
 
@@ -48,6 +53,9 @@ class Shell(AbstractCapability[Any]):
 
     max_output_chars: int = 10_000
     """Maximum characters of output returned to the model."""
+
+    persist_cwd: bool = False
+    """If ``True``, track ``cd`` commands and adjust the working directory for subsequent calls."""
 
     def __post_init__(self) -> None:
         """Resolve the working directory and validate configuration."""
@@ -99,15 +107,49 @@ class Shell(AbstractCapability[Any]):
     # Execution
     # ------------------------------------------------------------------
 
+    def _extract_cd_target(self, command: str) -> str | None:
+        """Extract the target directory from a ``cd`` command.
+
+        Returns ``None`` if *command* is not a ``cd`` invocation.
+        """
+        stripped = command.strip()
+        # Match: `cd <path>`, `cd <path> && ...`, `cd <path>;...`
+        m = re.match(r'^cd\s+(.+?)(?:\s*[;&|]|$)', stripped)
+        if m is None:
+            return None
+        target = m.group(1).strip()
+        # Strip surrounding quotes
+        if len(target) >= 2 and target[0] in ('"', "'") and target[-1] == target[0]:
+            target = target[1:-1]
+        return target
+
+    def _update_cwd(self, command: str) -> None:
+        """Update ``_cwd`` if *command* contains a ``cd`` and the target exists."""
+        target = self._extract_cd_target(command)
+        if target is None:
+            return
+        if target == '~':
+            new_cwd = Path.home()
+        elif target.startswith('~'):
+            new_cwd = Path.home() / target[2:]  # skip "~/"
+        else:
+            new_cwd = (self._cwd / target).resolve()
+        if new_cwd.is_dir():
+            self._cwd = new_cwd
+
     async def run_command(self, command: str, *, timeout_seconds: float | None = None) -> str:
         """Execute a shell command and return its output.
+
+        Stdout and stderr are captured separately and labeled in the output.
+        When ``persist_cwd`` is enabled, ``cd`` commands update the working
+        directory for subsequent calls.
 
         Args:
             command: The shell command to run.
             timeout_seconds: Maximum seconds to wait. Defaults to ``default_timeout``.
 
         Returns:
-            Combined stdout/stderr, with exit code appended on non-zero exit.
+            Labeled stdout/stderr output, with exit code appended on non-zero exit.
         """
         self.check_command(command)
         timeout = timeout_seconds if timeout_seconds is not None else self.default_timeout
@@ -115,15 +157,29 @@ class Shell(AbstractCapability[Any]):
         proc = await anyio.open_process(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.PIPE,
             cwd=self._cwd,
         )
         try:
             assert proc.stdout is not None
-            chunks: list[bytes] = []
-            with anyio.fail_after(timeout):
+            assert proc.stderr is not None
+            stdout_chunks: list[bytes] = []
+            stderr_chunks: list[bytes] = []
+
+            async def _read_stdout() -> None:
+                assert proc.stdout is not None
                 async for chunk in proc.stdout:
-                    chunks.append(chunk)
+                    stdout_chunks.append(chunk)
+
+            async def _read_stderr() -> None:
+                assert proc.stderr is not None
+                async for chunk in proc.stderr:
+                    stderr_chunks.append(chunk)
+
+            with anyio.fail_after(timeout):
+                async with anyio.create_task_group() as tg:
+                    tg.start_soon(_read_stdout)
+                    tg.start_soon(_read_stderr)
                 await proc.wait()
         except TimeoutError:
             proc.kill()
@@ -131,9 +187,21 @@ class Shell(AbstractCapability[Any]):
                 await proc.wait()
             return f'[Command timed out after {timeout} seconds]'
 
-        output = b''.join(chunks).decode('utf-8', errors='replace')
+        stdout = b''.join(stdout_chunks).decode('utf-8', errors='replace')
+        stderr = b''.join(stderr_chunks).decode('utf-8', errors='replace')
+
+        parts: list[str] = []
+        if stdout:
+            parts.append(f'[stdout]\n{stdout}')
+        if stderr:
+            parts.append(f'[stderr]\n{stderr}')
+        output = '\n'.join(parts) if parts else ''
+
         output = self.truncate(output)
         exit_code = proc.returncode if proc.returncode is not None else 0
+
+        if self.persist_cwd and exit_code == 0:
+            self._update_cwd(command)
 
         if exit_code != 0:
             return f'{output}\n[exit code: {exit_code}]'

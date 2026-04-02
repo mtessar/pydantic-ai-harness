@@ -388,6 +388,24 @@ class TestFileStore:
         store.put(MemoryEntry(key='k', content='v'))
         assert store.search('') == []
 
+    def test_load_malformed_json(self, tmp_path: Path) -> None:
+        path = tmp_path / 'mem.json'
+        path.write_text('not json at all', encoding='utf-8')
+        store = FileStore(path)
+        assert store.list_all() == []
+
+    def test_load_wrong_structure(self, tmp_path: Path) -> None:
+        path = tmp_path / 'mem.json'
+        path.write_text('["a", "b"]', encoding='utf-8')
+        store = FileStore(path)
+        assert store.list_all() == []
+
+    def test_load_missing_entry_fields(self, tmp_path: Path) -> None:
+        path = tmp_path / 'mem.json'
+        path.write_text('{"k": {"not_a_key": "oops"}}', encoding='utf-8')
+        store = FileStore(path)
+        assert store.list_all() == []
+
     def test_scope_persists(self, tmp_path: Path) -> None:
         path = tmp_path / 'mem.json'
         store1 = FileStore(path)

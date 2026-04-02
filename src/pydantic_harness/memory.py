@@ -246,8 +246,15 @@ class FileStore(_BaseDictStore):
 
     def _load(self) -> None:
         if self._path.exists():
-            raw = json.loads(self._path.read_text(encoding='utf-8'))
-            self._entries = {key: MemoryEntry.from_dict(val) for key, val in raw.items()}
+            try:
+                raw: dict[str, MemoryEntryDict] = json.loads(self._path.read_text(encoding='utf-8'))
+                if not isinstance(raw, dict):  # pyright: ignore[reportUnnecessaryIsInstance]
+                    logger.warning('Memory file %s contains non-dict JSON, starting empty', self._path)
+                    return
+                self._entries = {key: MemoryEntry.from_dict(val) for key, val in raw.items()}
+            except (json.JSONDecodeError, KeyError, TypeError) as e:
+                logger.warning('Failed to load memory file %s: %s, starting empty', self._path, e)
+                self._entries = {}
 
     def _save(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)

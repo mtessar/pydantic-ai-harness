@@ -178,15 +178,10 @@ class MemoryStore(Protocol):
         ...
 
 
-class InMemoryStore:
-    """Dict-based in-memory store, suitable for testing.
+class _BaseDictStore:
+    """Base class for dict-backed memory stores."""
 
-    All data lives in a plain `dict` and is lost when the process exits.
-    """
-
-    def __init__(self) -> None:
-        """Initialize an empty in-memory store."""
-        self._entries: dict[str, MemoryEntry] = {}
+    _entries: dict[str, MemoryEntry]
 
     def get(self, key: str) -> MemoryEntry | None:
         """Retrieve a memory entry by key."""
@@ -226,7 +221,18 @@ class InMemoryStore:
         return [entry for _, entry in scored]
 
 
-class FileStore:
+class InMemoryStore(_BaseDictStore):
+    """Dict-based in-memory store, suitable for testing.
+
+    All data lives in a plain `dict` and is lost when the process exits.
+    """
+
+    def __init__(self) -> None:
+        """Initialize an empty in-memory store."""
+        self._entries: dict[str, MemoryEntry] = {}
+
+
+class FileStore(_BaseDictStore):
     """JSON-file-based store for simple on-disk persistence.
 
     Reads the file on initialization and writes back on every mutation.
@@ -248,46 +254,17 @@ class FileStore:
         data = {key: entry.to_dict() for key, entry in self._entries.items()}
         self._path.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
-    def get(self, key: str) -> MemoryEntry | None:
-        """Retrieve a memory entry by key."""
-        return self._entries.get(key)
-
     def put(self, entry: MemoryEntry) -> None:
         """Store or update a memory entry."""
-        self._entries[entry.key] = entry
+        super().put(entry)
         self._save()
 
     def delete(self, key: str) -> bool:
         """Delete a memory entry by key."""
-        existed = self._entries.pop(key, None) is not None
+        existed = super().delete(key)
         if existed:
             self._save()
         return existed
-
-    def list_all(self, *, scope: str | None = None) -> list[MemoryEntry]:
-        """Return all non-expired entries, optionally filtered by scope."""
-        return [
-            entry
-            for entry in self._entries.values()
-            if not entry.is_expired() and (scope is None or entry.scope == scope)
-        ]
-
-    def search(self, query: str, *, scope: str | None = None) -> list[MemoryEntry]:
-        """Search non-expired entries with word-boundary matching, sorted by relevance."""
-        words = query.lower().split()
-        if not words:
-            return []
-        scored: list[tuple[int, MemoryEntry]] = []
-        for entry in self._entries.values():
-            if entry.is_expired():
-                continue
-            if scope is not None and entry.scope != scope:
-                continue
-            score = _score_entry(entry, words)
-            if score > 0:
-                scored.append((score, entry))
-        scored.sort(key=lambda pair: pair[0], reverse=True)
-        return [entry for _, entry in scored]
 
 
 def format_entry(entry: MemoryEntry) -> str:

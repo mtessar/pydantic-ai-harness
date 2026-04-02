@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypedDict, runtime_checkable
 
 from pydantic_ai._instructions import AgentInstructions
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -22,6 +22,27 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.toolsets.function import FunctionToolset
 
 logger = logging.getLogger(__name__)
+
+
+class _MemoryEntryDictRequired(TypedDict):
+    """Required fields for MemoryEntryDict."""
+
+    key: str
+    content: str
+
+
+class MemoryEntryDict(_MemoryEntryDictRequired, total=False):
+    """Serialized form of a MemoryEntry for JSON storage.
+
+    Only `key` and `content` are required; the remaining fields are
+    optional so that `from_dict` can accept legacy data missing some keys.
+    """
+
+    tags: list[str]
+    scope: str
+    expires_at: str | None
+    created_at: str
+    updated_at: str
 
 
 @dataclass
@@ -34,14 +55,14 @@ class MemoryEntry:
     content: str
     """The content of the memory."""
 
-    tags: list[str] = field(default_factory=list[str])
+    tags: list[str] = field(default_factory=lambda: list[str]())
     """Optional tags for categorization and search."""
 
     scope: str = 'global'
-    """Namespace scope for this memory (default ``'global'``)."""
+    """Namespace scope for this memory (default `'global'`)."""
 
     expires_at: str | None = None
-    """Optional ISO 8601 expiration timestamp. ``None`` means no expiry."""
+    """Optional ISO 8601 expiration timestamp. `None` means no expiry."""
 
     created_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     """ISO 8601 timestamp of when the memory was first created."""
@@ -55,7 +76,7 @@ class MemoryEntry:
             return False
         return datetime.fromisoformat(self.expires_at) <= datetime.now(timezone.utc)
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> MemoryEntryDict:
         """Serialize to a plain dict for JSON storage."""
         return {
             'key': self.key,
@@ -68,7 +89,7 @@ class MemoryEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MemoryEntry:
+    def from_dict(cls, data: MemoryEntryDict) -> MemoryEntry:
         """Deserialize from a plain dict."""
         return cls(
             key=data['key'],
@@ -87,7 +108,7 @@ def _score_entry(entry: MemoryEntry, words: list[str]) -> int:
     Each query word that appears as a whole word (case-insensitive) in the
     key, content, or any tag contributes one point per field it appears in.
     Underscores and hyphens are treated as word separators in addition to
-    the standard ``\b`` boundaries.
+    the standard `\\b` boundaries.
     """
     score = 0
     for word in words:
@@ -160,7 +181,7 @@ class MemoryStore(Protocol):
 class InMemoryStore:
     """Dict-based in-memory store, suitable for testing.
 
-    All data lives in a plain ``dict`` and is lost when the process exits.
+    All data lives in a plain `dict` and is lost when the process exits.
     """
 
     def __init__(self) -> None:
@@ -219,7 +240,7 @@ class FileStore:
 
     def _load(self) -> None:
         if self._path.exists():
-            raw: dict[str, Any] = json.loads(self._path.read_text(encoding='utf-8'))
+            raw = json.loads(self._path.read_text(encoding='utf-8'))
             self._entries = {key: MemoryEntry.from_dict(val) for key, val in raw.items()}
 
     def _save(self) -> None:
@@ -318,7 +339,7 @@ class Memory(AbstractCapability[AgentDepsT]):
     def from_spec(cls, *args: Any, **kwargs: Any) -> Memory[Any]:
         """Create from spec arguments.
 
-        Supports `backend` kwarg: ``"memory"`` (default) or ``"file"`` (requires `path`).
+        Supports `backend` kwarg: `"memory"` (default) or `"file"` (requires `path`).
         """
         backend = kwargs.pop('backend', 'memory')
         if backend == 'file':
@@ -350,8 +371,8 @@ class Memory(AbstractCapability[AgentDepsT]):
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Return a toolset with memory management tools.
 
-        Tool functions close over ``self`` to access the store without
-        requiring anything from the agent's ``deps``.
+        Tool functions close over `self` to access the store without
+        requiring anything from the agent's `deps`.
         """
         store = self.store
 
@@ -368,7 +389,7 @@ class Memory(AbstractCapability[AgentDepsT]):
                 key: Unique key for this memory.
                 content: The content to remember.
                 tags: Optional tags for categorization and search.
-                scope: Namespace scope (default ``'global'``).
+                scope: Namespace scope (default `'global'`).
                 ttl_minutes: Optional time-to-live in minutes. The entry will expire after this duration.
             """
             now = datetime.now(timezone.utc)

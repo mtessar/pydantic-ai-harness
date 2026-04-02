@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage, ToolCallPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
@@ -546,6 +546,32 @@ class TestOutputGuardrailWarn:
         with pytest.raises(OutputBlocked):
             await agent.run('Hello')
 
+    async def test_async_context_guard_allows(self) -> None:
+        """Async context_guard returning True should allow output."""
+
+        async def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            return True
+
+        agent = Agent(
+            TestModel(custom_output_text='ok'),
+            capabilities=[OutputGuardrail(context_guard=ctx_guard)],
+        )
+        result = await agent.run('test')
+        assert result.output is not None
+
+    async def test_async_context_guard_blocks(self) -> None:
+        """Async context_guard returning False should raise OutputBlocked."""
+
+        async def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            return False
+
+        agent = Agent(
+            TestModel(custom_output_text='bad'),
+            capabilities=[OutputGuardrail(context_guard=ctx_guard)],
+        )
+        with pytest.raises(OutputBlocked):
+            await agent.run('Hello')
+
     def test_no_guard_raises_value_error(self) -> None:
         """Neither guard nor context_guard should raise ValueError."""
         with pytest.raises(ValueError, match='Either guard or context_guard must be provided'):
@@ -724,27 +750,40 @@ class TestAsyncGuardrailConcurrent:
             await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=slow_handler)
         assert not model_completed
 
-    async def test_concurrent_model_finishes_first_guard_still_checked(self) -> None:
+    async def test_concurrent_model_finishes_first_guard_fails(self) -> None:
         """When the model finishes first but guard eventually fails, should still raise."""
-        guard_event = asyncio.Event()
 
         async def delayed_guard(messages: list[ModelMessage]) -> GuardrailResult:
-            await guard_event.wait()
+            # Sleep long enough that asyncio.wait returns model as the first-completed
+            await asyncio.sleep(0.05)
             return GuardrailResult(passed=False, reason='late failure')
 
         guardrail = AsyncGuardrail(guard=delayed_guard, mode='concurrent')
         ctx = _make_run_context()
         req_ctx = _make_model_request_context()
 
-        from pydantic_ai.messages import ModelResponse, TextPart
-
         async def fast_handler(rc: Any) -> ModelResponse:
-            # Set the event so the guard can continue after model finishes
-            guard_event.set()
             return ModelResponse(parts=[TextPart(content='done')])
 
         with pytest.raises(GuardrailFailed, match='late failure'):
             await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=fast_handler)
+
+    async def test_concurrent_model_finishes_first_guard_passes(self) -> None:
+        """When the model finishes first and guard passes, model response is returned."""
+
+        async def delayed_guard(messages: list[ModelMessage]) -> GuardrailResult:
+            await asyncio.sleep(0.05)
+            return GuardrailResult(passed=True)
+
+        guardrail = AsyncGuardrail(guard=delayed_guard, mode='concurrent')
+        ctx = _make_run_context()
+        req_ctx = _make_model_request_context()
+
+        async def fast_handler(rc: Any) -> ModelResponse:
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        response = await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=fast_handler)
+        assert response.parts[0].content == 'done'  # type: ignore[union-attr]
 
     async def test_concurrent_default_mode(self) -> None:
         """The default mode should be 'concurrent'."""

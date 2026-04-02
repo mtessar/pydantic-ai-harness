@@ -61,8 +61,17 @@ class KnowsCurrentTime(AbstractCapability[AgentDepsT]):
     _tzinfo: timezone | ZoneInfo = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        """Resolve the timezone string to a tzinfo object."""
-        self._tzinfo = _resolve_tz(self.tz)
+        """Resolve and validate the timezone string.
+
+        Raises:
+            ValueError: If ``tz`` is not a valid IANA timezone name.
+        """
+        try:
+            self._tzinfo = _resolve_tz(self.tz)
+        except (KeyError, ModuleNotFoundError) as exc:
+            raise ValueError(
+                f'{self.tz!r} is not a valid IANA timezone name. Examples: "UTC", "America/New_York", "Europe/London".'
+            ) from exc
 
     def _now(self) -> datetime:
         return datetime.now(tz=self._tzinfo)

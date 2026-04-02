@@ -27,7 +27,7 @@ def test_resolve_tz_named() -> None:
 
 
 def test_resolve_tz_invalid() -> None:
-    with pytest.raises(Exception):
+    with pytest.raises(KeyError):
         _resolve_tz('Not/A/Real/Zone')  # pyright: ignore[reportPrivateUsage]
 
 
@@ -139,3 +139,26 @@ def test_from_spec_with_kwargs() -> None:
     assert cap.tz == 'US/Eastern'
     assert cap.format == '%H:%M'
     assert cap.include_tool is True
+
+
+# --- timezone validation at init ---
+
+
+def test_invalid_timezone_raises_value_error() -> None:
+    with pytest.raises(ValueError, match="'Not/A/Real/Zone' is not a valid IANA timezone name"):
+        KnowsCurrentTime(tz='Not/A/Real/Zone')
+
+
+def test_invalid_timezone_error_includes_examples() -> None:
+    with pytest.raises(ValueError, match='Examples:'):
+        KnowsCurrentTime(tz='FakeZone')
+
+
+def test_valid_timezone_accepted() -> None:
+    cap: KnowsCurrentTime[None] = KnowsCurrentTime(tz='Europe/London')
+    assert cap.tz == 'Europe/London'
+
+
+def test_utc_timezone_accepted() -> None:
+    cap: KnowsCurrentTime[None] = KnowsCurrentTime(tz='UTC')
+    assert cap.tz == 'UTC'

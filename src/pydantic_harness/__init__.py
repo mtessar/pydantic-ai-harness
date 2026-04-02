@@ -7,4 +7,9 @@ Usage:
 # Each capability module is imported and re-exported here.
 # Capabilities are listed alphabetically.
 
-__all__: list[str] = []
+from pydantic_harness.tool_output_management import ToolOutputManagement, TruncationStrategy
+
+__all__: list[str] = [
+    'ToolOutputManagement',
+    'TruncationStrategy',
+]

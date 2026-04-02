@@ -21,6 +21,7 @@ from pydantic_harness import AsyncGuardrail, GuardrailFailed, GuardrailResult
 
 load_dotenv()
 logfire.configure()
+logfire.instrument_pydantic_ai()
 
 BLOCKED_TOPICS = ['weapon', 'exploit', 'hack into']
 
@@ -37,7 +38,7 @@ async def content_classifier(messages: list[ModelMessage]) -> GuardrailResult:
 
 
 agent = Agent(
-    'gateway/openai:gpt-5.4-mini',
+    'openai:gpt-5.4-mini',
     capabilities=[AsyncGuardrail(guard=content_classifier, mode='concurrent')],
     instructions='You are a helpful assistant.',
 )

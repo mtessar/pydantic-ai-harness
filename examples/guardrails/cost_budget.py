@@ -17,10 +17,11 @@ from pydantic_harness import BudgetExceededError, CostGuard
 
 load_dotenv()
 logfire.configure()
+logfire.instrument_pydantic_ai()
 
 agent = Agent(
-    'gateway/openai:gpt-5.4-mini',
-    capabilities=[CostGuard(max_total_tokens=500)],
+    'openai:gpt-5.4-mini',
+    capabilities=[CostGuard(max_total_tokens=150)],
     instructions='You are a helpful assistant. Answer questions concisely.',
 )
 
@@ -39,11 +40,11 @@ def get_population(city: str) -> str:
 
 async def main() -> None:
     """Run a multi-tool query that may exceed the token budget."""
-    print('--- Running with tight token budget (500 total tokens) ---')
+    print('--- Running with tight token budget (150 total tokens) ---')
     try:
         result = await agent.run('Tell me about the weather and population of Paris, London, and Tokyo.')
         print(f'Response: {result.output}')
-        print(f'Usage: {result.usage}')
+        print(f'Usage: {result.usage()}')
     except BudgetExceededError as e:
         print(f'Budget exceeded: {e.detail}')
 

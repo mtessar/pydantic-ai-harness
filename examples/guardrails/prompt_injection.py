@@ -19,6 +19,7 @@ from pydantic_harness import InputBlocked, InputGuardrail
 
 load_dotenv()
 logfire.configure()
+logfire.instrument_pydantic_ai()
 
 INJECTION_PATTERNS = [
     re.compile(r'IGNORE\s+PREVIOUS', re.IGNORECASE),
@@ -36,7 +37,7 @@ def detect_injection(text: str) -> bool:
 
 
 agent = Agent(
-    'gateway/openai:gpt-5.4-mini',
+    'openai:gpt-5.4-mini',
     capabilities=[InputGuardrail(guard=detect_injection)],
     instructions='You are a helpful assistant.',
 )

@@ -19,6 +19,7 @@ from pydantic_harness import OutputBlocked, OutputGuardrail
 
 load_dotenv()
 logfire.configure()
+logfire.instrument_pydantic_ai()
 
 SECRET_PATTERNS = [
     re.compile(r'sk-[a-zA-Z0-9]{20,}'),  # OpenAI keys
@@ -35,7 +36,7 @@ def check_for_secrets(text: str) -> bool:
 
 
 agent = Agent(
-    'gateway/openai:gpt-5.4-mini',
+    'openai:gpt-5.4-mini',
     capabilities=[OutputGuardrail(guard=check_for_secrets)],
     instructions='You are a helpful assistant. Repeat back exactly what the user says.',
 )

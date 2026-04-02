@@ -19,6 +19,7 @@ from pydantic_harness import ToolGuard
 
 load_dotenv()
 logfire.configure()
+logfire.instrument_pydantic_ai()
 
 
 def terminal_approval(tool_name: str, args: dict[str, Any]) -> bool:
@@ -30,7 +31,7 @@ def terminal_approval(tool_name: str, args: dict[str, Any]) -> bool:
 
 
 agent = Agent(
-    'gateway/openai:gpt-5.4-mini',
+    'openai:gpt-5.4-mini',
     capabilities=[
         ToolGuard(
             blocked=['drop_database'],

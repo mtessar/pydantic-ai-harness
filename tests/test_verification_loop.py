@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import warnings
 
 import pytest
@@ -31,6 +32,7 @@ class TestBuildFeedback:
         feedback = VerificationLoop._build_feedback([('lint', 'unused import on line 5')], attempt=1)
         assert 'attempt 1' in feedback
         assert '- lint: unused import on line 5' in feedback
+        assert 'ONLY fix the failing checks' in feedback
 
     def test_multiple_failures(self):
         failures = [('lint', 'error A'), ('test', 'error B')]
@@ -38,6 +40,10 @@ class TestBuildFeedback:
         assert 'attempt 2' in feedback
         assert '- lint: error A' in feedback
         assert '- test: error B' in feedback
+
+    def test_does_not_encourage_other_changes(self):
+        feedback = VerificationLoop._build_feedback([('test', 'fail')], attempt=1)
+        assert 'do not make other changes' in feedback
 
 
 class TestRunVerifiers:
@@ -265,6 +271,102 @@ async def test_passes_on_final_check_after_loop():
     assert check_calls == 3
     # No warning should have been emitted since the final check passed.
     assert len(w) == 0
+
+
+# ---------------------------------------------------------------------------
+# Parallel execution
+# ---------------------------------------------------------------------------
+
+
+class TestParallelVerifiers:
+    @pytest.mark.anyio()
+    async def test_parallel_default(self):
+        cap = VerificationLoop()
+        assert cap.parallel is True
+
+    @pytest.mark.anyio()
+    async def test_parallel_runs_concurrently(self):
+        """Verify that parallel execution actually runs checks concurrently."""
+        execution_log: list[str] = []
+
+        async def slow_check_a() -> VerificationResult:
+            execution_log.append('a_start')
+            await asyncio.sleep(0.01)
+            execution_log.append('a_end')
+            return VerificationResult(passed=True, message='OK')
+
+        async def slow_check_b() -> VerificationResult:
+            execution_log.append('b_start')
+            await asyncio.sleep(0.01)
+            execution_log.append('b_end')
+            return VerificationResult(passed=True, message='OK')
+
+        cap = VerificationLoop(
+            verifiers=[
+                Verifier(name='a', check_fn=slow_check_a),
+                Verifier(name='b', check_fn=slow_check_b),
+            ],
+            parallel=True,
+        )
+        failures = await cap._run_verifiers()
+        assert failures == []
+        # Both should start before either finishes.
+        assert execution_log[:2] == ['a_start', 'b_start']
+
+    @pytest.mark.anyio()
+    async def test_sequential_runs_in_order(self):
+        """When parallel=False, verifiers run one at a time."""
+        execution_log: list[str] = []
+
+        async def check_a() -> VerificationResult:
+            execution_log.append('a_start')
+            await asyncio.sleep(0.01)
+            execution_log.append('a_end')
+            return VerificationResult(passed=True, message='OK')
+
+        async def check_b() -> VerificationResult:
+            execution_log.append('b_start')
+            await asyncio.sleep(0.01)
+            execution_log.append('b_end')
+            return VerificationResult(passed=True, message='OK')
+
+        cap = VerificationLoop(
+            verifiers=[
+                Verifier(name='a', check_fn=check_a),
+                Verifier(name='b', check_fn=check_b),
+            ],
+            parallel=False,
+        )
+        failures = await cap._run_verifiers()
+        assert failures == []
+        # Sequential: a finishes before b starts.
+        assert execution_log == ['a_start', 'a_end', 'b_start', 'b_end']
+
+    @pytest.mark.anyio()
+    async def test_parallel_collects_failures(self):
+        """Parallel mode still correctly collects failures from all verifiers."""
+        cap = VerificationLoop(
+            verifiers=[
+                Verifier(name='lint', check_fn=_fail_verifier('lint error')),
+                Verifier(name='test', check_fn=_pass_verifier),
+                Verifier(name='build', check_fn=_fail_verifier('build error')),
+            ],
+            parallel=True,
+        )
+        failures = await cap._run_verifiers()
+        assert len(failures) == 2
+        assert failures[0] == ('lint', 'lint error')
+        assert failures[1] == ('build', 'build error')
+
+    @pytest.mark.anyio()
+    async def test_single_verifier_skips_gather(self):
+        """With only one verifier, gather is not used even in parallel mode."""
+        cap = VerificationLoop(
+            verifiers=[Verifier(name='lint', check_fn=_pass_verifier)],
+            parallel=True,
+        )
+        failures = await cap._run_verifiers()
+        assert failures == []
 
 
 # ---------------------------------------------------------------------------

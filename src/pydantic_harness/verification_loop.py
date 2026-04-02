@@ -26,6 +26,7 @@ Example::
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import warnings
 from collections.abc import Awaitable, Callable
@@ -99,6 +100,13 @@ class VerificationLoop(AbstractCapability[Any]):
     max_retries: int = 3
     """Maximum number of retry attempts when verification fails."""
 
+    parallel: bool = True
+    """Whether to run verifiers in parallel via ``asyncio.gather``.
+
+    When ``True`` (the default), all verifiers execute concurrently.
+    Set to ``False`` to run them sequentially in list order.
+    """
+
     # --- Per-run state ---
 
     _in_retry: bool = field(default=False, repr=False)
@@ -169,6 +177,10 @@ class VerificationLoop(AbstractCapability[Any]):
 
     async def _run_verifiers(self) -> list[tuple[str, str]]:
         """Run all verifiers and return a list of ``(name, message)`` for failures."""
+        if self.parallel and len(self.verifiers) > 1:
+            results = await asyncio.gather(*(v.check_fn() for v in self.verifiers))
+            return [(verifier.name, vr.message) for verifier, vr in zip(self.verifiers, results) if not vr.passed]
+
         failures: list[tuple[str, str]] = []
         for verifier in self.verifiers:
             vr = await verifier.check_fn()
@@ -179,7 +191,7 @@ class VerificationLoop(AbstractCapability[Any]):
     @staticmethod
     def _build_feedback(failures: list[tuple[str, str]], attempt: int) -> str:
         """Build a feedback prompt from verification failures."""
-        parts = [f'Verification failed (attempt {attempt}). Please fix the issues:']
+        parts = [f'Verification failed (attempt {attempt}). ONLY fix the failing checks, do not make other changes.']
         for name, message in failures:
             parts.append(f'- {name}: {message}')
         return '\n'.join(parts)

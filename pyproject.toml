@@ -68,6 +68,7 @@ extend-select = ['Q', 'RUF100', 'C90', 'UP', 'I', 'D', 'TID251']
 
 [tool.ruff.lint.per-file-ignores]
 'tests/**/*.py' = ['D']
+'examples/**/*.py' = ['T20']
 
 [tool.ruff.lint.flake8-quotes]
 inline-quotes = 'single'
@@ -84,6 +85,7 @@ quote-style = 'single'
 [tool.pyright]
 pythonVersion = '3.10'
 typeCheckingMode = 'strict'
+exclude = ['examples', '.venv']
 executionEnvironments = [
     { root = 'tests', reportPrivateUsage = false },
 ]

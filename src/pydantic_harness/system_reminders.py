@@ -15,7 +15,7 @@ Example usage::
             Reminder('Always verify your work before responding.', interval=5),
         ],
     )
-    agent = Agent('openai:gpt-4o', capabilities=[reminders])
+    agent = Agent('openai:gpt-5', capabilities=[reminders])
 """
 
 from __future__ import annotations
@@ -41,14 +41,34 @@ class Reminder:
         interval: Inject this reminder every N model requests. For example,
             ``interval=3`` means the reminder fires on the 3rd, 6th, 9th, etc.
             model request within a single run.
+        trigger: An optional predicate receiving the current
+            [`RunContext`][pydantic_ai.tools.RunContext]. When provided, the
+            reminder only fires when the trigger returns ``True`` *and* the
+            interval condition is met.
+        max_fires: Maximum number of times this reminder may fire within a
+            single run. ``None`` means no limit.
+        tag: When set, wrap the content in XML tags: ``<tag>content</tag>``.
+            For example, ``tag='system-reminder'`` produces
+            ``<system-reminder>content</system-reminder>``.
     """
 
     content: str
     interval: int = 1
+    trigger: Callable[[RunContext[Any]], bool] | None = None
+    max_fires: int | None = None
+    tag: str | None = None
 
     def __post_init__(self) -> None:  # noqa: D105
         if self.interval < 1:
             raise ValueError(f'interval must be >= 1, got {self.interval}')
+        if self.max_fires is not None and self.max_fires < 1:
+            raise ValueError(f'max_fires must be >= 1, got {self.max_fires}')
+
+    def render_content(self) -> str:
+        """Return the content, wrapped in XML tags if ``tag`` is set."""
+        if self.tag is not None:
+            return f'<{self.tag}>{self.content}</{self.tag}>'
+        return self.content
 
 
 DynamicReminder = Callable[[RunContext[Any]], str | None]
@@ -105,10 +125,12 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
     """Dynamic reminders evaluated on every model request."""
 
     _request_count: int = field(default=0, init=False, repr=False)
+    _fire_counts: list[int] = field(default_factory=list[int], init=False, repr=False)
 
     def __post_init__(self) -> None:  # noqa: D105
         if not self.reminders and not self.dynamic_reminders:
             raise ValueError('At least one static or dynamic reminder must be provided.')
+        self._fire_counts = [0] * len(self.reminders)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> SystemReminders[AgentDepsT]:
         """Return a fresh instance with a reset request counter for per-run isolation."""
@@ -127,10 +149,16 @@ class SystemReminders(AbstractCapability[AgentDepsT]):
 
         parts_to_inject: list[SystemPromptPart] = []
 
-        # Evaluate static reminders based on interval.
-        for reminder in self.reminders:
-            if self._request_count % reminder.interval == 0:
-                parts_to_inject.append(SystemPromptPart(content=reminder.content))
+        # Evaluate static reminders based on interval, trigger, and max_fires.
+        for idx, reminder in enumerate(self.reminders):
+            if self._request_count % reminder.interval != 0:
+                continue
+            if reminder.trigger is not None and not reminder.trigger(ctx):
+                continue
+            if reminder.max_fires is not None and self._fire_counts[idx] >= reminder.max_fires:
+                continue
+            self._fire_counts[idx] += 1
+            parts_to_inject.append(SystemPromptPart(content=reminder.render_content()))
 
         # Evaluate dynamic reminders.
         for dynamic in self.dynamic_reminders:

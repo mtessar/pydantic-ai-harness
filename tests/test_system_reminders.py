@@ -67,6 +67,14 @@ class TestReminderValidation:
         with pytest.raises(ValueError, match='interval must be >= 1'):
             Reminder('test', interval=-1)
 
+    def test_zero_max_fires_raises(self) -> None:
+        with pytest.raises(ValueError, match='max_fires must be >= 1'):
+            Reminder('test', max_fires=0)
+
+    def test_negative_max_fires_raises(self) -> None:
+        with pytest.raises(ValueError, match='max_fires must be >= 1'):
+            Reminder('test', max_fires=-2)
+
 
 # --- SystemReminders validation ---
 
@@ -124,6 +132,14 @@ class TestForRun:
         ctx = _make_run_context()
         fresh = await sr.for_run(ctx)
         assert fresh._request_count == 0  # pyright: ignore[reportPrivateUsage]
+
+    @pytest.mark.anyio
+    async def test_for_run_resets_fire_counts(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('test', max_fires=5)])
+        sr._fire_counts = [3]  # pyright: ignore[reportPrivateUsage]
+        ctx = _make_run_context()
+        fresh = await sr.for_run(ctx)
+        assert fresh._fire_counts == [0]  # pyright: ignore[reportPrivateUsage]
 
 
 # --- Static reminder injection ---
@@ -411,6 +427,235 @@ class TestMessageInjection:
         msg = req_ctx.messages[0]
         assert isinstance(msg, ModelRequest)
         assert len(msg.parts) == 1
+
+
+# --- Condition-triggered reminders ---
+
+
+class TestTrigger:
+    @pytest.mark.anyio
+    async def test_trigger_true_fires(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('triggered', trigger=lambda ctx: True)])
+        ctx = _make_run_context()
+
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['triggered']
+
+    @pytest.mark.anyio
+    async def test_trigger_false_suppresses(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('suppressed', trigger=lambda ctx: False)])
+        ctx = _make_run_context()
+
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+    @pytest.mark.anyio
+    async def test_trigger_receives_run_context(self) -> None:
+        """Trigger predicate receives the RunContext and can inspect run_step."""
+
+        def high_step_trigger(ctx: Any) -> bool:
+            return ctx.run_step > 10  # type: ignore[no-any-return]
+
+        sr = SystemReminders(reminders=[Reminder('late warning', trigger=high_step_trigger)])
+
+        # Low step: trigger is False, no injection.
+        ctx_low = _make_run_context(run_step=5)
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx_low, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+        # High step: trigger is True, fires.
+        ctx_high = _make_run_context(run_step=15)
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx_high, req_ctx)
+        assert _system_contents(req_ctx) == ['late warning']
+
+    @pytest.mark.anyio
+    async def test_trigger_combined_with_interval(self) -> None:
+        """Trigger must return True AND interval must match for the reminder to fire."""
+        sr = SystemReminders(
+            reminders=[Reminder('combo', interval=2, trigger=lambda ctx: True)],
+        )
+        ctx = _make_run_context()
+
+        # Request 1: interval doesn't match (1 % 2 != 0).
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+        # Request 2: interval matches and trigger is True.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['combo']
+
+    @pytest.mark.anyio
+    async def test_trigger_false_blocks_even_when_interval_matches(self) -> None:
+        sr = SystemReminders(
+            reminders=[Reminder('blocked', interval=1, trigger=lambda ctx: False)],
+        )
+        ctx = _make_run_context()
+
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+
+# --- Max fires ---
+
+
+class TestMaxFires:
+    @pytest.mark.anyio
+    async def test_max_fires_limits_injections(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('limited', max_fires=2)])
+        ctx = _make_run_context()
+
+        # First two requests: fires.
+        for _ in range(2):
+            req_ctx = _make_request_context()
+            await sr.before_model_request(ctx, req_ctx)
+            assert _system_contents(req_ctx) == ['limited']
+
+        # Third request: max reached, no injection.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+    @pytest.mark.anyio
+    async def test_max_fires_none_means_unlimited(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('unlimited', max_fires=None)])
+        ctx = _make_run_context()
+
+        for _ in range(10):
+            req_ctx = _make_request_context()
+            await sr.before_model_request(ctx, req_ctx)
+            assert _system_contents(req_ctx) == ['unlimited']
+
+    @pytest.mark.anyio
+    async def test_max_fires_with_interval(self) -> None:
+        """max_fires counts actual fires, not interval-eligible requests."""
+        sr = SystemReminders(reminders=[Reminder('capped', interval=2, max_fires=1)])
+        ctx = _make_run_context()
+
+        # Request 1: interval doesn't match.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+        # Request 2: fires (first and only fire).
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['capped']
+
+        # Request 3: interval doesn't match.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+        # Request 4: interval matches but max_fires exhausted.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+    @pytest.mark.anyio
+    async def test_max_fires_per_reminder_independence(self) -> None:
+        """Each reminder tracks its own fire count independently."""
+        sr = SystemReminders(
+            reminders=[
+                Reminder('once', max_fires=1),
+                Reminder('twice', max_fires=2),
+            ],
+        )
+        ctx = _make_run_context()
+
+        # Request 1: both fire.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['once', 'twice']
+
+        # Request 2: 'once' exhausted, 'twice' still has one left.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['twice']
+
+        # Request 3: both exhausted.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
+
+
+# --- XML tag wrapping ---
+
+
+class TestTagWrapping:
+    def test_render_content_without_tag(self) -> None:
+        r = Reminder('plain content')
+        assert r.render_content() == 'plain content'
+
+    def test_render_content_with_tag(self) -> None:
+        r = Reminder('reminder text', tag='system-reminder')
+        assert r.render_content() == '<system-reminder>reminder text</system-reminder>'
+
+    @pytest.mark.anyio
+    async def test_tag_wrapping_in_injection(self) -> None:
+        sr = SystemReminders(reminders=[Reminder('stay focused', tag='system-reminder')])
+        ctx = _make_run_context()
+
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['<system-reminder>stay focused</system-reminder>']
+
+    @pytest.mark.anyio
+    async def test_mixed_tagged_and_untagged(self) -> None:
+        sr = SystemReminders(
+            reminders=[
+                Reminder('tagged', tag='hint'),
+                Reminder('untagged'),
+            ],
+        )
+        ctx = _make_run_context()
+
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['<hint>tagged</hint>', 'untagged']
+
+
+# --- Combined features ---
+
+
+class TestCombinedFeatures:
+    @pytest.mark.anyio
+    async def test_trigger_and_max_fires_and_tag(self) -> None:
+        """All three new features work together on a single reminder."""
+        fires: list[bool] = [True, True, True, False]
+        call_idx = 0
+
+        def toggling_trigger(ctx: Any) -> bool:
+            nonlocal call_idx
+            result = fires[call_idx] if call_idx < len(fires) else False
+            call_idx += 1
+            return result
+
+        sr = SystemReminders(
+            reminders=[Reminder('combo', trigger=toggling_trigger, max_fires=2, tag='note')],
+        )
+        ctx = _make_run_context()
+
+        # Request 1: trigger True, fires (1/2).
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['<note>combo</note>']
+
+        # Request 2: trigger True, fires (2/2).
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == ['<note>combo</note>']
+
+        # Request 3: trigger True, but max_fires exhausted.
+        req_ctx = _make_request_context()
+        await sr.before_model_request(ctx, req_ctx)
+        assert _system_contents(req_ctx) == []
 
 
 # --- Serialization ---

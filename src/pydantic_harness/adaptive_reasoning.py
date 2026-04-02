@@ -13,7 +13,7 @@ from typing import Any, Literal, TypeAlias
 
 from pydantic_ai._run_context import RunContext
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelRequest, RetryPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, RetryPromptPart, ToolCallPart
 from pydantic_ai.settings import ModelSettings, ThinkingEffort
 
 EffortLevel: TypeAlias = Literal['low', 'medium', 'high']
@@ -29,11 +29,29 @@ _EFFORT_TO_THINKING: dict[str, ThinkingEffort] = {
 }
 
 
+_MANY_TOOL_CALLS_THRESHOLD = 3
+"""Number of ``ToolCallPart`` parts in a single response that signals medium effort."""
+
+
 def _has_tool_errors(messages: Sequence[ModelMessage]) -> bool:
     """Check whether the most recent request message contains retry prompts (tool errors)."""
     for msg in reversed(messages):
         if isinstance(msg, ModelRequest):
             return any(isinstance(part, RetryPromptPart) for part in msg.parts)
+    return False
+
+
+def _last_response_had_many_tool_calls(messages: Sequence[ModelMessage]) -> bool:
+    """Check whether the most recent ``ModelResponse`` had many tool call parts.
+
+    Returns ``True`` if the latest response contained at least
+    :data:`_MANY_TOOL_CALLS_THRESHOLD` ``ToolCallPart`` instances, signalling
+    a complex multi-tool orchestration step that deserves medium effort.
+    """
+    for msg in reversed(messages):
+        if isinstance(msg, ModelResponse):
+            tool_call_count = sum(1 for part in msg.parts if isinstance(part, ToolCallPart))
+            return tool_call_count >= _MANY_TOOL_CALLS_THRESHOLD
     return False
 
 
@@ -43,8 +61,9 @@ def default_effort_fn(ctx: RunContext[Any]) -> Literal['low', 'medium', 'high']:
     Rules (evaluated in order):
     1. First step (``run_step == 1``): ``'high'`` -- understand the task.
     2. After tool errors (retry prompts in the latest request): ``'high'`` -- reason about failures.
-    3. Steps 2+ with no errors: ``'low'`` -- simple follow-ups incorporating tool results.
-    4. Default: ``'medium'``.
+    3. Many tool calls (3+ ``ToolCallPart`` in last response): ``'medium'`` -- complex orchestration.
+    4. Second step (``run_step == 2``): ``'medium'`` -- still building context.
+    5. Later steps (``run_step >= 3``): ``'low'`` -- simple follow-ups.
     """
     if ctx.run_step <= 1:
         return 'high'
@@ -52,11 +71,13 @@ def default_effort_fn(ctx: RunContext[Any]) -> Literal['low', 'medium', 'high']:
     if _has_tool_errors(ctx.messages):
         return 'high'
 
-    # Later steps without errors are typically straightforward follow-ups.
-    if ctx.run_step >= 2:
-        return 'low'
+    if _last_response_had_many_tool_calls(ctx.messages):
+        return 'medium'
 
-    return 'medium'  # pragma: no cover
+    if ctx.run_step == 2:
+        return 'medium'
+
+    return 'low'
 
 
 @dataclass

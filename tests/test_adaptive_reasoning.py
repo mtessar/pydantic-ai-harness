@@ -11,13 +11,18 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryPromptPart,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.settings import ModelSettings
 
 from pydantic_harness import AdaptiveReasoning
-from pydantic_harness.adaptive_reasoning import _has_tool_errors, default_effort_fn
+from pydantic_harness.adaptive_reasoning import (
+    _has_tool_errors,
+    _last_response_had_many_tool_calls,
+    default_effort_fn,
+)
 
 
 def _make_ctx(
@@ -75,6 +80,67 @@ class TestHasToolErrors:
         assert _has_tool_errors(messages) is True
 
 
+# --- _last_response_had_many_tool_calls ---
+
+
+class TestLastResponseHadManyToolCalls:
+    def test_no_messages(self) -> None:
+        assert _last_response_had_many_tool_calls([]) is False
+
+    def test_no_response(self) -> None:
+        messages: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart(content='hi')])]
+        assert _last_response_had_many_tool_calls(messages) is False
+
+    def test_below_threshold(self) -> None:
+        messages: list[ModelMessage] = [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='t1', args='{}'),
+                    ToolCallPart(tool_name='t2', args='{}'),
+                ]
+            ),
+        ]
+        assert _last_response_had_many_tool_calls(messages) is False
+
+    def test_at_threshold(self) -> None:
+        messages: list[ModelMessage] = [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='t1', args='{}'),
+                    ToolCallPart(tool_name='t2', args='{}'),
+                    ToolCallPart(tool_name='t3', args='{}'),
+                ]
+            ),
+        ]
+        assert _last_response_had_many_tool_calls(messages) is True
+
+    def test_checks_latest_response(self) -> None:
+        """Only the most recent ModelResponse is inspected."""
+        old_response = ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='t1', args='{}'),
+                ToolCallPart(tool_name='t2', args='{}'),
+                ToolCallPart(tool_name='t3', args='{}'),
+            ]
+        )
+        new_response = ModelResponse(parts=[TextPart(content='done')])
+        messages: list[ModelMessage] = [old_response, new_response]
+        assert _last_response_had_many_tool_calls(messages) is False
+
+    def test_skips_requests(self) -> None:
+        """ModelRequest objects are skipped when searching."""
+        response = ModelResponse(
+            parts=[
+                ToolCallPart(tool_name='t1', args='{}'),
+                ToolCallPart(tool_name='t2', args='{}'),
+                ToolCallPart(tool_name='t3', args='{}'),
+            ]
+        )
+        request = ModelRequest(parts=[ToolReturnPart(tool_name='t1', content='ok')])
+        messages: list[ModelMessage] = [response, request]
+        assert _last_response_had_many_tool_calls(messages) is True
+
+
 # --- default_effort_fn ---
 
 
@@ -94,15 +160,51 @@ class TestDefaultEffortFn:
         ctx = _make_ctx(run_step=3, messages=messages)
         assert default_effort_fn(ctx) == 'high'
 
-    def test_simple_followup_low(self) -> None:
+    def test_step_two_medium(self) -> None:
         messages = [
             ModelRequest(parts=[ToolReturnPart(tool_name='t', content='result')]),
         ]
         ctx = _make_ctx(run_step=2, messages=messages)
-        assert default_effort_fn(ctx) == 'low'
+        assert default_effort_fn(ctx) == 'medium'
 
     def test_later_step_no_errors_low(self) -> None:
         ctx = _make_ctx(run_step=5, messages=[])
+        assert default_effort_fn(ctx) == 'low'
+
+    def test_step_three_low(self) -> None:
+        messages = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='t', content='result')]),
+        ]
+        ctx = _make_ctx(run_step=3, messages=messages)
+        assert default_effort_fn(ctx) == 'low'
+
+    def test_many_tool_calls_medium(self) -> None:
+        """A response with 3+ ToolCallParts should trigger medium effort."""
+        messages: list[Any] = [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='t1', args='{}'),
+                    ToolCallPart(tool_name='t2', args='{}'),
+                    ToolCallPart(tool_name='t3', args='{}'),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='t1', content='ok')]),
+        ]
+        ctx = _make_ctx(run_step=5, messages=messages)
+        assert default_effort_fn(ctx) == 'medium'
+
+    def test_few_tool_calls_not_medium(self) -> None:
+        """A response with <3 ToolCallParts should not trigger medium effort at step 3+."""
+        messages: list[Any] = [
+            ModelResponse(
+                parts=[
+                    ToolCallPart(tool_name='t1', args='{}'),
+                    ToolCallPart(tool_name='t2', args='{}'),
+                ]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='t1', content='ok')]),
+        ]
+        ctx = _make_ctx(run_step=5, messages=messages)
         assert default_effort_fn(ctx) == 'low'
 
 
@@ -126,7 +228,17 @@ class TestAdaptiveReasoning:
         result = settings_fn(ctx)
         assert result == ModelSettings(thinking='high')
 
-    def test_dynamic_settings_followup(self) -> None:
+    def test_dynamic_settings_step_two(self) -> None:
+        cap = AdaptiveReasoning()
+        settings_fn = cap.get_model_settings()
+        messages = [
+            ModelRequest(parts=[ToolReturnPart(tool_name='t', content='ok')]),
+        ]
+        ctx = _make_ctx(run_step=2, messages=messages)
+        result = settings_fn(ctx)
+        assert result == ModelSettings(thinking='medium')
+
+    def test_dynamic_settings_later_step_low(self) -> None:
         cap = AdaptiveReasoning()
         settings_fn = cap.get_model_settings()
         messages = [

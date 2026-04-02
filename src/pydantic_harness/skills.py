@@ -10,6 +10,7 @@ set of tools (as callables or a :class:`~pydantic_ai.FunctionToolset`).  The
 
 * ``search_skills(query)`` -- returns matching skill names and descriptions.
 * ``load_skill(name)`` -- activates a skill's tools for the current run.
+* ``unload_skill(name)`` -- deactivates a skill's tools, freeing context.
 
 Tools belonging to unloaded skills are hidden from the model via
 :meth:`~pydantic_ai.capabilities.AbstractCapability.prepare_tools`.
@@ -122,6 +123,8 @@ def _parse_skill_markdown(text: str, *, source: str = '<string>') -> Skill:
 
     # Minimal YAML-like parsing (key: value lines) to avoid a hard
     # dependency on PyYAML for this simple case.
+    # Unknown keys (e.g. from agentskills.io: tools, dependencies, etc.)
+    # are silently ignored so that external skill catalogs stay compatible.
     fm: dict[str, str] = {}
     for line in frontmatter_text.splitlines():
         line = line.strip()
@@ -146,9 +149,9 @@ def _parse_skill_markdown(text: str, *, source: str = '<string>') -> Skill:
 class Skills(AbstractCapability[AgentDepsT]):
     """Capability for progressive skill discovery and loading.
 
-    Provides ``search_skills`` and ``load_skill`` meta-tools.  Tools
-    belonging to registered skills are hidden until the agent explicitly
-    loads the skill that owns them.
+    Provides ``search_skills``, ``load_skill``, and ``unload_skill``
+    meta-tools.  Tools belonging to registered skills are hidden until
+    the agent explicitly loads the skill that owns them.
 
     Per-run state (which skills are loaded) is isolated via
     :meth:`for_run`.
@@ -205,6 +208,7 @@ class Skills(AbstractCapability[AgentDepsT]):
             'You have access to a skill catalog. '
             'Use `search_skills` to find relevant skills by keyword, '
             'then `load_skill` to activate a skill and make its tools available. '
+            'Use `unload_skill` when you no longer need a skill, to free context. '
             "Only loaded skills' tools appear in your tool list."
         )
 
@@ -218,6 +222,7 @@ class Skills(AbstractCapability[AgentDepsT]):
         # Register meta-tools
         toolset.add_function(self._search_skills, takes_ctx=False, name='search_skills')
         toolset.add_function(self._load_skill, takes_ctx=False, name='load_skill')
+        toolset.add_function(self._unload_skill, takes_ctx=False, name='unload_skill')
 
         # Register each skill's tools (they will be hidden until loaded)
         for skill in self.skills:
@@ -243,7 +248,7 @@ class Skills(AbstractCapability[AgentDepsT]):
                 hidden.update(skill.tool_names())
 
         # Always keep meta-tools visible
-        meta_tools = {'search_skills', 'load_skill'}
+        meta_tools = {'search_skills', 'load_skill', 'unload_skill'}
 
         return [td for td in tool_defs if td.name in meta_tools or td.name not in hidden]
 
@@ -253,23 +258,38 @@ class Skills(AbstractCapability[AgentDepsT]):
         """Search available skills by keyword.
 
         Returns a list of matching skills with their name, description,
-        and whether they are currently loaded.
+        and whether they are currently loaded, ranked by relevance.
+
+        The query is split into words and each word is matched
+        case-insensitively against the skill name and description.
+        Skills matching at least one word are returned, ordered by the
+        number of matching words (most relevant first).
 
         Args:
             query: A keyword or phrase to search for in skill names and descriptions.
         """
-        query_lower = query.lower()
-        results: list[dict[str, str]] = []
+        words = query.lower().split()
+        if not words:
+            return []
+
+        scored: list[tuple[int, Skill]] = []
         for skill in self.skills:
-            if query_lower in skill.name.lower() or query_lower in skill.description.lower():
-                results.append(
-                    {
-                        'name': skill.name,
-                        'description': skill.description,
-                        'loaded': 'yes' if skill.name in self._loaded_skill_names else 'no',
-                    }
-                )
-        return results
+            haystack = f'{skill.name} {skill.description}'.lower()
+            matches = sum(1 for w in words if w in haystack)
+            if matches:
+                scored.append((matches, skill))
+
+        # Sort by match count descending, then by name for stability
+        scored.sort(key=lambda pair: (-pair[0], pair[1].name))
+
+        return [
+            {
+                'name': skill.name,
+                'description': skill.description,
+                'loaded': 'yes' if skill.name in self._loaded_skill_names else 'no',
+            }
+            for _, skill in scored
+        ]
 
     def _load_skill(self, name: str) -> str:
         """Load a skill by name, making its tools available.
@@ -294,6 +314,26 @@ class Skills(AbstractCapability[AgentDepsT]):
         if skill.instructions:
             parts.append(f'Instructions:\n{skill.instructions}')
         return '\n'.join(parts)
+
+    def _unload_skill(self, name: str) -> str:
+        """Unload a skill by name, removing its tools from the context.
+
+        Use this when you no longer need a skill's tools, to free up
+        space in the context window.
+
+        Args:
+            name: The exact name of the skill to unload.
+        """
+        skill = self._find_skill(name)
+        if skill is None:
+            available = ', '.join(s.name for s in self.skills)
+            return f'Skill {name!r} not found. Available skills: {available}'
+
+        if name not in self._loaded_skill_names:
+            return f'Skill {name!r} is not currently loaded.'
+
+        self._loaded_skill_names.discard(name)
+        return f'Skill {name!r} unloaded. Its tools are no longer available.'
 
     # -- Helpers --
 

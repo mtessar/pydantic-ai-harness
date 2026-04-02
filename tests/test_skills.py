@@ -153,6 +153,24 @@ class TestParseSkillMarkdown:
         skill = _parse_skill_markdown(md)
         assert skill.name == 'commented'
 
+    def test_unknown_frontmatter_keys_ignored(self) -> None:
+        """agentskills.io compatibility: extra fields like tools, dependencies, etc. are silently ignored."""
+        md = textwrap.dedent("""\
+            ---
+            name: external-skill
+            description: From agentskills.io
+            tools: [fetch, parse]
+            dependencies: [httpx]
+            author: someone
+            version: 1.0.0
+            ---
+            Instructions for the skill.
+        """)
+        skill = _parse_skill_markdown(md)
+        assert skill.name == 'external-skill'
+        assert skill.description == 'From agentskills.io'
+        assert skill.instructions == 'Instructions for the skill.'
+
 
 # ---------------------------------------------------------------------------
 # Directory loading
@@ -203,6 +221,7 @@ class TestSkillsCapability:
         assert instructions is not None
         assert 'search_skills' in instructions
         assert 'load_skill' in instructions
+        assert 'unload_skill' in instructions
 
     def test_get_instructions_no_skills(self) -> None:
         cap: Skills[None] = Skills()
@@ -219,6 +238,7 @@ class TestSkillsCapability:
         # Should contain meta-tools + skill tools
         assert 'search_skills' in toolset.tools
         assert 'load_skill' in toolset.tools
+        assert 'unload_skill' in toolset.tools
         assert 'add' in toolset.tools
 
     def test_get_toolset_no_skills(self) -> None:
@@ -334,6 +354,111 @@ class TestSkillsMetaTools:
         result = cap._load_skill('math')
         assert "Skill 'math' loaded." in result
         assert 'Instructions' not in result
+
+    def test_search_skills_multi_word_ranks_by_match_count(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='web-scraper', description='Scrape web pages'),
+                Skill(name='web-api', description='HTTP API client'),
+                Skill(name='math', description='Arithmetic operations'),
+            ]
+        )
+        results = cap._search_skills('web scrape')
+        assert len(results) == 2
+        # web-scraper matches both words, web-api matches only "web"
+        assert results[0]['name'] == 'web-scraper'
+        assert results[1]['name'] == 'web-api'
+
+    def test_search_skills_empty_query(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic'),
+            ]
+        )
+        results = cap._search_skills('')
+        assert results == []
+
+    def test_search_skills_whitespace_query(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic'),
+            ]
+        )
+        results = cap._search_skills('   ')
+        assert results == []
+
+    def test_search_skills_partial_word_match(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic operations'),
+            ]
+        )
+        # "arith" is a substring of "arithmetic"
+        results = cap._search_skills('arith')
+        assert len(results) == 1
+        assert results[0]['name'] == 'math'
+
+    def test_unload_skill_success(self) -> None:
+        def add(a: int, b: int) -> int:
+            """Add."""
+            return a + b
+
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic', tools=[add]),
+            ]
+        )
+        cap._loaded_skill_names.add('math')
+        result = cap._unload_skill('math')
+        assert 'math' not in cap._loaded_skill_names
+        assert "Skill 'math' unloaded." in result
+
+    def test_unload_skill_not_found(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic'),
+            ]
+        )
+        result = cap._unload_skill('nonexistent')
+        assert 'not found' in result
+        assert 'math' in result  # suggests available skills
+
+    def test_unload_skill_not_loaded(self) -> None:
+        cap = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic'),
+            ]
+        )
+        result = cap._unload_skill('math')
+        assert 'not currently loaded' in result
+
+    def test_unload_skill_hides_tools_again(self) -> None:
+        def add(a: int, b: int) -> int:
+            """Add."""
+            return a + b
+
+        cap: Skills[None] = Skills(
+            skills=[
+                Skill(name='math', description='Arithmetic', tools=[add]),
+            ]
+        )
+        cap._loaded_skill_names.add('math')
+        tool_defs = [
+            _make_tool_def('search_skills'),
+            _make_tool_def('load_skill'),
+            _make_tool_def('unload_skill'),
+            _make_tool_def('add'),
+        ]
+        # Tools visible while loaded
+        result = asyncio.run(cap.prepare_tools(None, tool_defs))  # type: ignore[arg-type]
+        assert 'add' in [td.name for td in result]
+
+        # Unload and verify tools are hidden
+        cap._unload_skill('math')
+        result = asyncio.run(cap.prepare_tools(None, tool_defs))  # type: ignore[arg-type]
+        names = [td.name for td in result]
+        assert 'add' not in names
+        assert 'unload_skill' in names
 
 
 class TestSkillsPrepareTools:

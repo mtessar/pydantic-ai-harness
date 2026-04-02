@@ -7,4 +7,26 @@ Usage:
 # Each capability module is imported and re-exported here.
 # Capabilities are listed alphabetically.
 
-__all__: list[str] = []
+from pydantic_harness.guardrails import (
+    BudgetExceededError,
+    CostGuard,
+    GuardrailError,
+    InputBlocked,
+    InputGuardrail,
+    OutputBlocked,
+    OutputGuardrail,
+    ToolBlocked,
+    ToolGuard,
+)
+
+__all__: list[str] = [
+    'BudgetExceededError',
+    'CostGuard',
+    'GuardrailError',
+    'InputBlocked',
+    'InputGuardrail',
+    'OutputBlocked',
+    'OutputGuardrail',
+    'ToolBlocked',
+    'ToolGuard',
+]

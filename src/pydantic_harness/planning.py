@@ -23,6 +23,7 @@ class TaskStatus(str, Enum):
     in_progress = 'in_progress'
     completed = 'completed'
     skipped = 'skipped'
+    blocked = 'blocked'
 
 
 @dataclass
@@ -31,10 +32,13 @@ class Task:
 
     description: str
     status: TaskStatus = TaskStatus.pending
+    parent_index: int | None = None
 
 
 def format_plan(tasks: list[Task]) -> str:
     """Format the current plan as a readable string.
+
+    Subtasks (those with a ``parent_index``) are indented under their parent.
 
     Args:
         tasks: The list of tasks to format.
@@ -50,22 +54,26 @@ def format_plan(tasks: list[Task]) -> str:
         TaskStatus.in_progress: '[~]',
         TaskStatus.completed: '[x]',
         TaskStatus.skipped: '[-]',
+        TaskStatus.blocked: '[!]',
     }
 
     lines: list[str] = []
     for i, task in enumerate(tasks):
         icon = status_icons[task.status]
-        lines.append(f'{i}. {icon} {task.description}')
+        indent = '  ' if task.parent_index is not None else ''
+        lines.append(f'{indent}{i}. {icon} {task.description}')
 
     total = len(tasks)
     completed = sum(1 for t in tasks if t.status == TaskStatus.completed)
     skipped = sum(1 for t in tasks if t.status == TaskStatus.skipped)
     in_progress = sum(1 for t in tasks if t.status == TaskStatus.in_progress)
     pending = sum(1 for t in tasks if t.status == TaskStatus.pending)
+    blocked = sum(1 for t in tasks if t.status == TaskStatus.blocked)
 
     lines.append('')
     lines.append(
-        f'Progress: {completed}/{total} completed, {in_progress} in progress, {pending} pending, {skipped} skipped'
+        f'Progress: {completed}/{total} completed, {in_progress} in progress, '
+        f'{pending} pending, {skipped} skipped, {blocked} blocked'
     )
 
     return '\n'.join(lines)
@@ -103,6 +111,106 @@ def update_task_impl(tasks: list[Task], index: int, status: TaskStatus) -> str:
         return f'Invalid task index {index}. Valid range: 0-{len(tasks) - 1}.'
     tasks[index].status = status
     return f'Task {index} updated to {status.value}.\n\n{format_plan(tasks)}'
+
+
+def add_subtask_impl(tasks: list[Task], parent_index: int, description: str) -> str:
+    """Add a subtask under an existing parent task.
+
+    The subtask is inserted immediately after the parent and any existing
+    subtasks of that parent.
+
+    Args:
+        tasks: The shared task list to modify.
+        parent_index: Zero-based index of the parent task.
+        description: Description of the subtask.
+
+    Returns:
+        A confirmation message or an error description.
+    """
+    if not tasks:
+        return 'No plan exists. Use create_plan first.'
+    if parent_index < 0 or parent_index >= len(tasks):
+        return f'Invalid parent index {parent_index}. Valid range: 0-{len(tasks) - 1}.'
+    if tasks[parent_index].parent_index is not None:
+        return f'Task {parent_index} is itself a subtask. Nested subtasks are not supported.'
+
+    # Find insertion point: after parent and its existing subtasks.
+    insert_at = parent_index + 1
+    while insert_at < len(tasks) and tasks[insert_at].parent_index == parent_index:
+        insert_at += 1
+
+    tasks.insert(insert_at, Task(description=description, parent_index=parent_index))
+
+    # Adjust parent_index references for tasks shifted by the insertion.
+    for task in tasks[insert_at + 1 :]:
+        if task.parent_index is not None and task.parent_index >= insert_at:
+            task.parent_index += 1
+
+    return f'Subtask added under task {parent_index} at index {insert_at}.\n\n{format_plan(tasks)}'
+
+
+def insert_task_impl(tasks: list[Task], index: int, description: str) -> str:
+    """Insert a new top-level task at a given position.
+
+    Args:
+        tasks: The shared task list to modify.
+        index: Zero-based position to insert at (clamped to list bounds).
+        description: Description of the new task.
+
+    Returns:
+        A confirmation message with the formatted plan.
+    """
+    clamped = max(0, min(index, len(tasks)))
+    tasks.insert(clamped, Task(description=description))
+
+    # Adjust parent_index references for tasks shifted by the insertion.
+    for task in tasks[clamped + 1 :]:
+        if task.parent_index is not None and task.parent_index >= clamped:
+            task.parent_index += 1
+
+    return f'Task inserted at index {clamped}.\n\n{format_plan(tasks)}'
+
+
+def remove_task_impl(tasks: list[Task], index: int) -> str:
+    """Remove a task by index.
+
+    If the removed task is a parent, its subtasks are also removed.
+
+    Args:
+        tasks: The shared task list to modify.
+        index: Zero-based index of the task to remove.
+
+    Returns:
+        A confirmation message or an error description.
+    """
+    if not tasks:
+        return 'No plan exists. Use create_plan first.'
+    if index < 0 or index >= len(tasks):
+        return f'Invalid task index {index}. Valid range: 0-{len(tasks) - 1}.'
+
+    removed = tasks[index]
+    # Collect indices to remove: the task itself, plus any subtasks if it's a parent.
+    indices_to_remove = {index}
+    if removed.parent_index is None:
+        # It's a top-level task; remove its subtasks too.
+        for i, task in enumerate(tasks):
+            if task.parent_index == index:
+                indices_to_remove.add(i)
+
+    # Remove in reverse order to keep indices stable.
+    for i in sorted(indices_to_remove, reverse=True):
+        tasks.pop(i)
+
+    # Adjust parent_index references: for each removed index (ascending),
+    # decrement references that pointed past it.
+    for removed_idx in sorted(indices_to_remove):
+        for task in tasks:
+            if task.parent_index is not None and task.parent_index > removed_idx:
+                task.parent_index -= 1
+
+    count = len(indices_to_remove)
+    suffix = f' (and {count - 1} subtask{"s" if count > 2 else ""})' if count > 1 else ''
+    return f'Task {index} removed{suffix}.\n\n{format_plan(tasks)}'
 
 
 def get_plan_impl(tasks: list[Task]) -> str:
@@ -182,6 +290,40 @@ class Planning(AbstractCapability[AgentDepsT]):
                 status: The new status for the task.
             """
             return update_task_impl(tasks, index, status)
+
+        @toolset.tool
+        def add_subtask(ctx: RunContext[AgentDepsT], parent_index: int, description: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            """Add a subtask under an existing parent task.
+
+            Args:
+                ctx: The run context.
+                parent_index: The zero-based index of the parent task.
+                description: Description of the subtask.
+            """
+            return add_subtask_impl(tasks, parent_index, description)
+
+        @toolset.tool
+        def insert_task(ctx: RunContext[AgentDepsT], index: int, description: str) -> str:  # pyright: ignore[reportUnusedFunction]
+            """Insert a new task at a given position in the plan.
+
+            Args:
+                ctx: The run context.
+                index: The zero-based position to insert at.
+                description: Description of the new task.
+            """
+            return insert_task_impl(tasks, index, description)
+
+        @toolset.tool
+        def remove_task(ctx: RunContext[AgentDepsT], index: int) -> str:  # pyright: ignore[reportUnusedFunction]
+            """Remove a task from the plan by index.
+
+            If the task has subtasks, they are also removed.
+
+            Args:
+                ctx: The run context.
+                index: The zero-based index of the task to remove.
+            """
+            return remove_task_impl(tasks, index)
 
         @toolset.tool
         def get_plan(ctx: RunContext[AgentDepsT]) -> str:  # pyright: ignore[reportUnusedFunction]

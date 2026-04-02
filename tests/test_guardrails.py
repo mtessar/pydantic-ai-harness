@@ -26,6 +26,12 @@ from pydantic_harness.guardrails import (
 pytestmark = pytest.mark.anyio
 
 
+@pytest.fixture
+def anyio_backend() -> str:
+    """Restrict to asyncio — pydantic-ai internals use asyncio.gather."""
+    return 'asyncio'
+
+
 # ---------------------------------------------------------------------------
 # Exception hierarchy
 # ---------------------------------------------------------------------------
@@ -114,6 +120,20 @@ class TestInputGuardrail:
         agent = Agent(TestModel(), capabilities=[InputGuardrail(guard=block_sql)])
         with pytest.raises(InputBlocked, match='Input blocked by guardrail'):
             await agent.run('DROP TABLE users')
+
+    async def test_none_prompt_skips_guard(self) -> None:
+        """When prompt is None, the guard function should not be called."""
+        called = False
+
+        def guard(text: str) -> bool:  # pragma: no cover
+            nonlocal called
+            called = True
+            return False
+
+        guardrail = InputGuardrail(guard=guard)
+        ctx = _make_run_context()
+        await guardrail.before_run(ctx)
+        assert not called
 
     def test_not_serializable(self) -> None:
         """InputGuardrail should not be spec-serializable (takes a callable)."""
@@ -377,7 +397,7 @@ class TestComposition:
         """If input guardrail blocks, output guardrail should never run."""
         output_called = False
 
-        def output_guard(text: str) -> bool:
+        def output_guard(text: str) -> bool:  # pragma: no cover
             nonlocal output_called
             output_called = True
             return True

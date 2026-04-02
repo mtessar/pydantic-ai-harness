@@ -80,7 +80,7 @@ class TestBasicApproval:
         )
 
         @agent.tool_plain
-        def dangerous() -> str:
+        def dangerous() -> str:  # pragma: no cover – tool is denied
             nonlocal executed
             executed = True
             return 'should not see this'
@@ -100,7 +100,7 @@ class TestBasicApproval:
         )
 
         @agent.tool_plain
-        def anything() -> str:
+        def anything() -> str:  # pragma: no cover – tool is denied
             nonlocal executed
             executed = True
             return 'nope'
@@ -321,12 +321,50 @@ class TestAsyncCallback:
         )
 
         @agent.tool_plain
-        def tool() -> str:
+        def tool() -> str:  # pragma: no cover – tool is denied
             return 'should not run'
 
         result = await agent.run('test')
         assert DENIED_MESSAGE in result.output
         assert len(log) == 1
+
+
+# ---------------------------------------------------------------------------
+# mode='once' caching within a single run
+# ---------------------------------------------------------------------------
+
+
+class TestOnceModeCaching:
+    async def test_once_mode_skips_callback_on_repeat(self) -> None:
+        """In mode='once', a second call to the same tool should skip the callback."""
+        from unittest.mock import MagicMock
+
+        from pydantic_ai.messages import ToolCallPart
+        from pydantic_ai.tools import ToolDefinition
+
+        log, cb = make_callback(approve=True)
+        cap = Approval(tool_patterns=['repeat'], callback=cb, mode='once')
+
+        mock_ctx = MagicMock()
+        call = ToolCallPart(tool_name='repeat', args='{}', tool_call_id='c1')
+        tool_def = ToolDefinition(name='repeat', description='Repeat something')
+        args: dict[str, Any] = {'text': 'hello'}
+
+        handler_results: list[str] = []
+
+        async def handler(a: Any) -> str:
+            handler_results.append('called')
+            return 'ok'
+
+        # First call — callback should fire
+        await cap.wrap_tool_execute(mock_ctx, call=call, tool_def=tool_def, args=args, handler=handler)
+        assert len(log) == 1
+
+        # Second call — callback should be skipped (auto-approved)
+        call2 = ToolCallPart(tool_name='repeat', args='{}', tool_call_id='c2')
+        await cap.wrap_tool_execute(mock_ctx, call=call2, tool_def=tool_def, args=args, handler=handler)
+        assert len(log) == 1  # Still 1 — callback wasn't called again
+        assert len(handler_results) == 2  # But handler was called both times
 
 
 # ---------------------------------------------------------------------------

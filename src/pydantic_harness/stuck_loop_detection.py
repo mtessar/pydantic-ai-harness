@@ -128,6 +128,13 @@ class StuckLoopDetection(AbstractCapability[Any]):
     warning_message: str = DEFAULT_WARNING_MESSAGE
     """The message sent to the model (or included in the error) when a loop is detected."""
 
+    max_history_length: int = 50
+    """Maximum number of entries to keep in the call and result history lists.
+
+    Older entries are discarded (from the left) when this limit is exceeded,
+    preventing unbounded memory growth during long agent runs.
+    """
+
     # --- Per-run state (populated by ``for_run``) ---
 
     _call_history: list[str] = field(default_factory=lambda: list[str](), repr=False)
@@ -142,6 +149,7 @@ class StuckLoopDetection(AbstractCapability[Any]):
             max_repeated_calls=self.max_repeated_calls,
             action=self.action,
             warning_message=self.warning_message,
+            max_history_length=self.max_history_length,
         )
 
     async def after_model_request(
@@ -158,6 +166,8 @@ class StuckLoopDetection(AbstractCapability[Any]):
 
         for tc in tool_calls:
             self._call_history.append(_tool_call_key(tc))
+
+        self._trim_history(self._call_history)
 
         # --- Check for repeated identical calls ---
         reason = self._check_repeated()
@@ -181,12 +191,20 @@ class StuckLoopDetection(AbstractCapability[Any]):
         """Track tool results for no-op detection."""
         result_repr = repr(result)
         self._result_history.append((call.tool_name, result_repr))
+        self._trim_history(self._result_history)
 
         reason = self._check_noop()
         if reason is not None:
             self._trigger(reason)
 
         return result
+
+    # --- History management ---
+
+    def _trim_history(self, history: list[Any]) -> None:
+        """Remove oldest entries when *history* exceeds :attr:`max_history_length`."""
+        while len(history) > self.max_history_length:
+            history.pop(0)
 
     # --- Detection helpers ---
 

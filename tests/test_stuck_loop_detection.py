@@ -331,3 +331,76 @@ async def test_threshold_one():
 
     with pytest.raises(StuckLoopError):
         await cap.after_model_request(ctx, request_context=rctx, response=resp)  # type: ignore[arg-type]
+
+
+# --- History length capping ---
+
+
+def test_max_history_length_default():
+    cap = StuckLoopDetection()
+    assert cap.max_history_length == 50
+
+
+@pytest.mark.anyio()
+async def test_call_history_capped():
+    """_call_history should never exceed max_history_length."""
+    cap = StuckLoopDetection(max_repeated_calls=100, max_history_length=5)
+    ctx: object = _FakeCtx()
+    rctx: object = _FakeRequestContext()
+
+    for i in range(10):
+        tc = _make_tc('tool', {'i': i})
+        resp = _make_response(tc)
+        await cap.after_model_request(ctx, request_context=rctx, response=resp)  # type: ignore[arg-type]
+
+    assert len(cap._call_history) == 5
+    # The most recent entries are kept (oldest popped from left).
+    assert cap._call_history[0] == _tool_call_key(_make_tc('tool', {'i': 5}))
+    assert cap._call_history[-1] == _tool_call_key(_make_tc('tool', {'i': 9}))
+
+
+@pytest.mark.anyio()
+async def test_result_history_capped():
+    """_result_history should never exceed max_history_length."""
+    cap = StuckLoopDetection(max_repeated_calls=100, max_history_length=5)
+    ctx: object = _FakeCtx()
+    td: object = _FakeToolDef()
+
+    for i in range(10):
+        tc = _make_tc('tool', {'i': i})
+        await cap.after_tool_execute(ctx, call=tc, tool_def=td, args={'i': i}, result=f'r{i}')  # type: ignore[arg-type]
+
+    assert len(cap._result_history) == 5
+    assert cap._result_history[0] == ('tool', repr('r5'))
+    assert cap._result_history[-1] == ('tool', repr('r9'))
+
+
+@pytest.mark.anyio()
+async def test_for_run_preserves_max_history_length():
+    """for_run should carry over the max_history_length setting."""
+    cap = StuckLoopDetection(max_history_length=10)
+    fresh = await cap.for_run(_FakeCtx())  # type: ignore[arg-type]
+    assert fresh.max_history_length == 10
+
+
+@pytest.mark.anyio()
+async def test_detection_still_works_with_capped_history():
+    """Detection should still trigger even when history is being capped."""
+    cap = StuckLoopDetection(max_repeated_calls=3, max_history_length=5)
+    ctx: object = _FakeCtx()
+    rctx: object = _FakeRequestContext()
+
+    # Fill history with unique calls first.
+    for i in range(3):
+        tc = _make_tc('other', {'i': i})
+        resp = _make_response(tc)
+        await cap.after_model_request(ctx, request_context=rctx, response=resp)  # type: ignore[arg-type]
+
+    # Now repeat the same call 3 times — should still trigger.
+    tc = _make_tc('stuck', {'x': 1})
+    resp = _make_response(tc)
+    for _ in range(2):
+        await cap.after_model_request(ctx, request_context=rctx, response=resp)  # type: ignore[arg-type]
+
+    with pytest.raises(ModelRetry, match='stuck.*identical arguments'):
+        await cap.after_model_request(ctx, request_context=rctx, response=resp)  # type: ignore[arg-type]

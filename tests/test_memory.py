@@ -477,6 +477,27 @@ class TestMemoryCapability:
         cap = Memory.from_spec(backend='file', path=str(path))
         assert isinstance(cap.store, FileStore)
 
+    def test_from_spec_unknown_backend(self) -> None:
+        import pytest
+
+        with pytest.raises(ValueError, match='Unknown memory backend'):
+            Memory.from_spec(backend='redis')
+
+    def test_from_spec_explicit_memory_backend(self) -> None:
+        cap = Memory.from_spec(backend='memory')
+        assert isinstance(cap.store, InMemoryStore)
+
+    def test_from_spec_with_options(self, tmp_path: Path) -> None:
+        cap = Memory.from_spec(
+            backend='file',
+            path=str(tmp_path / 'mem.json'),
+            inject_memories_in_instructions=False,
+            max_instructions_memories=10,
+        )
+        assert isinstance(cap.store, FileStore)
+        assert cap.inject_memories_in_instructions is False
+        assert cap.max_instructions_memories == 10
+
     def test_default_store(self) -> None:
         cap: Memory[None] = Memory()
         assert isinstance(cap.store, InMemoryStore)

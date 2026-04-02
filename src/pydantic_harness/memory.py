@@ -320,16 +320,34 @@ class Memory(AbstractCapability[AgentDepsT]):
         return 'Memory'
 
     @classmethod
-    def from_spec(cls, *args: Any, **kwargs: Any) -> Memory[Any]:
+    def from_spec(
+        cls,
+        *,
+        backend: str = 'memory',
+        path: str = '.memories.json',
+        inject_memories_in_instructions: bool = True,
+        max_instructions_memories: int = 20,
+    ) -> Memory[Any]:
         """Create from spec arguments.
 
-        Supports `backend` kwarg: `"memory"` (default) or `"file"` (requires `path`).
+        Args:
+            backend: Storage backend, `"memory"` (default) or `"file"`.
+            path: File path for the `"file"` backend (default `".memories.json"`).
+            inject_memories_in_instructions: Whether to inject memories into the system prompt.
+            max_instructions_memories: Maximum memories to inject into the system prompt.
         """
-        backend = kwargs.pop('backend', 'memory')
-        if backend == 'file':
-            path = kwargs.pop('path', '.memories.json')
-            return cls(store=FileStore(path), **kwargs)
-        return cls(store=InMemoryStore(), **kwargs)
+        store: MemoryStore
+        if backend == 'memory':
+            store = InMemoryStore()
+        elif backend == 'file':
+            store = FileStore(path)
+        else:
+            raise ValueError(f'Unknown memory backend: {backend!r}. Use "memory" or "file".')
+        return cls(
+            store=store,
+            inject_memories_in_instructions=inject_memories_in_instructions,
+            max_instructions_memories=max_instructions_memories,
+        )
 
     def build_instructions(self, ctx: RunContext[AgentDepsT]) -> str:
         """Build dynamic instructions that include currently stored memories."""

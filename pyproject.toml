@@ -42,6 +42,11 @@ lint = [
     'ruff>=0.14',
     'pyright>=1.1.408',
 ]
+examples = [
+    'logfire',
+    'python-dotenv',
+    'pydantic-ai-slim[openai]',
+]
 
 [tool.hatch.version]
 source = 'uv-dynamic-versioning'

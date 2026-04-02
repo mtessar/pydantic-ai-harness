@@ -28,7 +28,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, TypeGuard
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
@@ -105,7 +105,7 @@ class GuardrailResult:
     """Result of a guardrail check.
 
     Attributes:
-        passed: ``True`` if the check passed.
+        passed: `True` if the check passed.
         reason: Human-readable explanation (used in error messages and logs).
     """
 
@@ -118,13 +118,13 @@ class GuardrailResult:
 # ---------------------------------------------------------------------------
 
 GuardFunc: TypeAlias = Callable[[str], bool] | Callable[[str], Awaitable[bool]]
-"""A sync or async function that receives a text string and returns ``True`` if safe."""
+"""A sync or async function that receives a text string and returns `True` if safe."""
 
 ContextGuardFunc: TypeAlias = Callable[[RunContext[Any], str], bool] | Callable[[RunContext[Any], str], Awaitable[bool]]
-"""A sync or async guard that receives ``RunContext`` and the text string, returns ``True`` if safe."""
+"""A sync or async guard that receives `RunContext` and the text string, returns `True` if safe."""
 
 ApprovalFunc: TypeAlias = Callable[[str, dict[str, Any]], bool] | Callable[[str, dict[str, Any]], Awaitable[bool]]
-"""A sync or async function ``(tool_name, args) -> bool`` that grants or denies tool execution."""
+"""A sync or async function `(tool_name, args) -> bool` that grants or denies tool execution."""
 
 AsyncGuardFunc: TypeAlias = (
     Callable[[list[ModelMessage]], Awaitable[GuardrailResult]]
@@ -132,15 +132,15 @@ AsyncGuardFunc: TypeAlias = (
 )
 """An async guard for :class:`AsyncGuardrail`.
 
-Accepts either ``(messages) -> GuardrailResult`` or ``(ctx, messages) -> GuardrailResult``.
+Accepts either `(messages) -> GuardrailResult` or `(ctx, messages) -> GuardrailResult`.
 """
 
 GuardrailMode: TypeAlias = Literal['concurrent', 'blocking', 'monitoring']
 """Execution mode for :class:`AsyncGuardrail`.
 
-- ``concurrent``: run guard and model call in parallel; cancel model if guard fails.
-- ``blocking``: run guard before the model call; raise on failure.
-- ``monitoring``: run guard after the model call; log failures without raising.
+- `concurrent`: run guard and model call in parallel; cancel model if guard fails.
+- `blocking`: run guard before the model call; raise on failure.
+- `monitoring`: run guard after the model call; log failures without raising.
 """
 
 
@@ -149,10 +149,24 @@ GuardrailMode: TypeAlias = Literal['concurrent', 'blocking', 'monitoring']
 # ---------------------------------------------------------------------------
 
 
+def _is_awaitable_bool(val: bool | Awaitable[bool]) -> TypeGuard[Awaitable[bool]]:
+    """Narrow a sync-or-async guard result to the awaitable case."""
+    return inspect.isawaitable(val)
+
+
+def _is_context_async_guard(
+    func: AsyncGuardFunc,
+) -> TypeGuard[Callable[[RunContext[Any], list[ModelMessage]], Awaitable[GuardrailResult]]]:
+    """Narrow an async guard function to the 2-arg (context-aware) variant."""
+    sig = inspect.signature(func)
+    params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+    return len(params) >= 2
+
+
 async def _call_guard(func: GuardFunc, text: str) -> bool:
     """Call a sync or async guard function and return its bool result."""
     result = func(text)
-    if inspect.isawaitable(result):
+    if _is_awaitable_bool(result):
         return await result
     return result  # type: ignore[return-value]
 
@@ -160,7 +174,7 @@ async def _call_guard(func: GuardFunc, text: str) -> bool:
 async def _call_context_guard(func: ContextGuardFunc, ctx: RunContext[Any], text: str) -> bool:
     """Call a sync or async context-aware guard function and return its bool result."""
     result = func(ctx, text)
-    if inspect.isawaitable(result):
+    if _is_awaitable_bool(result):
         return await result
     return result  # type: ignore[return-value]
 
@@ -168,7 +182,7 @@ async def _call_context_guard(func: ContextGuardFunc, ctx: RunContext[Any], text
 async def _call_approval(func: ApprovalFunc, tool_name: str, args: dict[str, Any]) -> bool:
     """Call a sync or async approval function and return its bool result."""
     result = func(tool_name, args)
-    if inspect.isawaitable(result):
+    if _is_awaitable_bool(result):
         return await result
     return result  # type: ignore[return-value]
 
@@ -177,13 +191,9 @@ async def _call_async_guard(
     func: AsyncGuardFunc, ctx: RunContext[Any], messages: list[ModelMessage]
 ) -> GuardrailResult:
     """Call an async guard function, auto-detecting the 1-arg or 2-arg signature."""
-    sig = inspect.signature(func)
-    params = [p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
-    if len(params) >= 2:
-        result = func(ctx, messages)  # type: ignore[call-arg]
-    else:
-        result = func(messages)  # type: ignore[call-arg]
-    return await result  # type: ignore[misc]
+    if _is_context_async_guard(func):
+        return await func(ctx, messages)
+    return await func(messages)  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +205,11 @@ async def _call_async_guard(
 class InputGuardrail(AbstractCapability[Any]):
     """Validate user input before the agent run starts.
 
-    The guard function receives the user prompt as a string (or ``RunContext``
-    and the string when ``context_guard`` is used) and returns ``True``
-    if the input is acceptable.  When it returns ``False``, an
-    :class:`InputBlocked` exception is raised and the run never starts,
-    unless ``on_fail='warn'`` in which case a warning is logged instead.
+    The guard function receives the user prompt as a string (or `RunContext`
+    and the string when `context_guard` is used) and returns `True`
+    if the input is acceptable.  When it returns `False`, an
+    `InputBlocked` exception is raised and the run never starts,
+    unless `on_fail='warn'` in which case a warning is logged instead.
 
     Both sync and async guard functions are accepted.
 
@@ -217,13 +227,13 @@ class InputGuardrail(AbstractCapability[Any]):
     """
 
     guard: GuardFunc | None = None
-    """Function ``(text) -> bool`` that checks input safety.  Returns ``True`` if safe."""
+    """Function `(text) -> bool` that checks input safety.  Returns `True` if safe."""
 
     context_guard: ContextGuardFunc | None = None
-    """Function ``(ctx, text) -> bool`` that checks input safety with access to ``RunContext``."""
+    """Function `(ctx, text) -> bool` that checks input safety with access to `RunContext`."""
 
     on_fail: Literal['raise', 'warn'] = 'raise'
-    """Action when the guard fails: ``'raise'`` (default) raises :class:`InputBlocked`; ``'warn'`` logs a warning."""
+    """Action when the guard fails: `'raise'` (default) raises `InputBlocked`; `'warn'` logs a warning."""
 
     def __post_init__(self) -> None:
         """Validate that exactly one guard is provided."""
@@ -267,10 +277,10 @@ class InputGuardrail(AbstractCapability[Any]):
 class OutputGuardrail(AbstractCapability[Any]):
     """Validate model output after the agent run completes.
 
-    The guard function receives the stringified output (or ``RunContext``
-    and the string when ``context_guard`` is used) and returns ``True``
-    if the output is acceptable.  When it returns ``False``, an
-    :class:`OutputBlocked` exception is raised, unless ``on_fail='warn'``
+    The guard function receives the stringified output (or `RunContext`
+    and the string when `context_guard` is used) and returns `True`
+    if the output is acceptable.  When it returns `False`, an
+    `OutputBlocked` exception is raised, unless `on_fail='warn'`
     in which case a warning is logged instead and the result passes through.
 
     Both sync and async guard functions are accepted.
@@ -288,13 +298,13 @@ class OutputGuardrail(AbstractCapability[Any]):
     """
 
     guard: GuardFunc | None = None
-    """Function ``(text) -> bool`` that checks output safety.  Returns ``True`` if safe."""
+    """Function `(text) -> bool` that checks output safety.  Returns `True` if safe."""
 
     context_guard: ContextGuardFunc | None = None
-    """Function ``(ctx, text) -> bool`` that checks output safety with access to ``RunContext``."""
+    """Function `(ctx, text) -> bool` that checks output safety with access to `RunContext`."""
 
     on_fail: Literal['raise', 'warn'] = 'raise'
-    """Action when the guard fails: ``'raise'`` (default) raises :class:`OutputBlocked`; ``'warn'`` logs a warning."""
+    """Action when the guard fails: `'raise'` (default) raises `OutputBlocked`; `'warn'` logs a warning."""
 
     def __post_init__(self) -> None:
         """Validate that exactly one guard is provided."""
@@ -335,12 +345,12 @@ class OutputGuardrail(AbstractCapability[Any]):
 class CostGuard(AbstractCapability[Any]):
     """Enforce token budget limits during an agent run.
 
-    Checks cumulative token usage via ``ctx.usage`` before each model request
-    and raises :class:`BudgetExceededError` when a configured threshold is
+    Checks cumulative token usage via `ctx.usage` before each model request
+    and raises `BudgetExceededError` when a configured threshold is
     exceeded.
 
-    At least one of ``max_input_tokens``, ``max_output_tokens``, or
-    ``max_total_tokens`` must be set.
+    At least one of `max_input_tokens`, `max_output_tokens`, or
+    `max_total_tokens` must be set.
 
     Example:
         ```python
@@ -355,13 +365,13 @@ class CostGuard(AbstractCapability[Any]):
     """
 
     max_input_tokens: int | None = None
-    """Maximum cumulative input tokens allowed.  ``None`` means unlimited."""
+    """Maximum cumulative input tokens allowed.  `None` means unlimited."""
 
     max_output_tokens: int | None = None
-    """Maximum cumulative output tokens allowed.  ``None`` means unlimited."""
+    """Maximum cumulative output tokens allowed.  `None` means unlimited."""
 
     max_total_tokens: int | None = None
-    """Maximum cumulative total tokens (input + output) allowed.  ``None`` means unlimited."""
+    """Maximum cumulative total tokens (input + output) allowed.  `None` means unlimited."""
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -395,10 +405,10 @@ class CostGuard(AbstractCapability[Any]):
 class ToolGuard(AbstractCapability[Any]):
     """Control per-tool access: block tools or require approval before execution.
 
-    Blocked tools are hidden from the model entirely via ``prepare_tools``.
-    Tools requiring approval trigger the ``approval_callback`` before execution;
-    if no callback is configured or the callback returns ``False``, a
-    :class:`ToolBlocked` exception is raised.
+    Blocked tools are hidden from the model entirely via `prepare_tools`.
+    Tools requiring approval trigger the `approval_callback` before execution;
+    if no callback is configured or the callback returns `False`, a
+    `ToolBlocked` exception is raised.
 
     Both sync and async approval callbacks are accepted.
 
@@ -428,7 +438,7 @@ class ToolGuard(AbstractCapability[Any]):
     """Tool names that require approval before execution."""
 
     approval_callback: ApprovalFunc | None = None
-    """Callback ``(tool_name, args) -> bool``.  Required when ``require_approval`` is non-empty."""
+    """Callback `(tool_name, args) -> bool`.  Required when `require_approval` is non-empty."""
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -454,7 +464,7 @@ class ToolGuard(AbstractCapability[Any]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Enforce approval for tools in ``require_approval``."""
+        """Enforce approval for tools in `require_approval`."""
         if call.tool_name not in self.require_approval:
             return args
 
@@ -476,23 +486,23 @@ class ToolGuard(AbstractCapability[Any]):
 class AsyncGuardrail(AbstractCapability[Any]):
     """Run a guard function alongside model requests.
 
-    Uses :meth:`~pydantic_ai.capabilities.AbstractCapability.wrap_model_request`
+    Uses `AbstractCapability.wrap_model_request`
     to intercept each model call and execute the guard concurrently, before, or
-    after the model request depending on ``mode``.
+    after the model request depending on `mode`.
 
     Modes:
-        - ``concurrent`` (default): guard and model run in parallel via
-          ``asyncio.create_task``. If the guard fails first, the model task
-          is cancelled and :class:`GuardrailFailed` is raised.
-        - ``blocking``: guard runs *before* the model call. If the guard
+        - `concurrent` (default): guard and model run in parallel via
+          `asyncio.create_task`. If the guard fails first, the model task
+          is cancelled and `GuardrailFailed` is raised.
+        - `blocking`: guard runs *before* the model call. If the guard
           fails, the model is never called.
-        - ``monitoring``: model runs first, then the guard runs. Guard
+        - `monitoring`: model runs first, then the guard runs. Guard
           failures are logged but do not raise.
 
     The guard function may accept one or two positional arguments:
 
-    - ``async (messages: list[ModelMessage]) -> GuardrailResult``
-    - ``async (ctx: RunContext, messages: list[ModelMessage]) -> GuardrailResult``
+    - `async (messages: list[ModelMessage]) -> GuardrailResult`
+    - `async (ctx: RunContext, messages: list[ModelMessage]) -> GuardrailResult`
 
     Example:
         ```python
@@ -515,7 +525,7 @@ class AsyncGuardrail(AbstractCapability[Any]):
     """Async guard function to run on each model request."""
 
     mode: GuardrailMode = 'concurrent'
-    """Execution mode: ``'concurrent'``, ``'blocking'``, or ``'monitoring'``."""
+    """Execution mode: `'concurrent'`, `'blocking'`, or `'monitoring'`."""
 
     @classmethod
     def get_serialization_name(cls) -> str | None:
@@ -529,7 +539,7 @@ class AsyncGuardrail(AbstractCapability[Any]):
         request_context: ModelRequestContext,
         handler: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
     ) -> ModelResponse:
-        """Intercept model requests to run the guard according to ``mode``."""
+        """Intercept model requests to run the guard according to `mode`."""
         messages = request_context.messages
         if self.mode == 'blocking':
             return await self._run_blocking(ctx, messages, request_context, handler)

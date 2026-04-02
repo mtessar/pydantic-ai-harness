@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic_ai import Agent
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.usage import RunUsage
 
 from pydantic_harness.guardrails import (
+    AsyncGuardrail,
     BudgetExceededError,
     CostGuard,
     GuardrailError,
+    GuardrailFailed,
+    GuardrailResult,
     InputBlocked,
     InputGuardrail,
     OutputBlocked,
@@ -420,13 +426,393 @@ class TestComposition:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# InputGuardrail — warn mode and context_guard
+# ---------------------------------------------------------------------------
+
+
+class TestInputGuardrailWarn:
+    async def test_warn_mode_logs_instead_of_raising(self, caplog: pytest.LogCaptureFixture) -> None:
+        """In warn mode, a failing guard should log a warning and allow the run."""
+        agent = Agent(
+            TestModel(),
+            capabilities=[InputGuardrail(guard=lambda text: False, on_fail='warn')],
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_harness.guardrails'):
+            result = await agent.run('Hello')
+        assert result.output is not None
+        assert 'Input blocked by guardrail' in caplog.text
+
+    async def test_warn_mode_no_log_when_passing(self, caplog: pytest.LogCaptureFixture) -> None:
+        """In warn mode, a passing guard should not log anything."""
+        agent = Agent(
+            TestModel(),
+            capabilities=[InputGuardrail(guard=lambda text: True, on_fail='warn')],
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_harness.guardrails'):
+            result = await agent.run('Hello')
+        assert result.output is not None
+        assert 'Input blocked' not in caplog.text
+
+    async def test_context_guard_receives_ctx_and_text(self) -> None:
+        """context_guard should receive RunContext and the prompt text."""
+        received_ctx: list[RunContext[Any]] = []
+        received_text: list[str] = []
+
+        def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            received_ctx.append(ctx)
+            received_text.append(text)
+            return True
+
+        agent = Agent(TestModel(), capabilities=[InputGuardrail(context_guard=ctx_guard)])
+        await agent.run('test with context')
+        assert len(received_ctx) == 1
+        assert received_text == ['test with context']
+
+    async def test_context_guard_blocks(self) -> None:
+        """context_guard returning False should raise InputBlocked."""
+
+        def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            return False
+
+        agent = Agent(TestModel(), capabilities=[InputGuardrail(context_guard=ctx_guard)])
+        with pytest.raises(InputBlocked):
+            await agent.run('Hello')
+
+    def test_no_guard_raises_value_error(self) -> None:
+        """Neither guard nor context_guard should raise ValueError."""
+        with pytest.raises(ValueError, match='Either guard or context_guard must be provided'):
+            InputGuardrail()
+
+    def test_both_guards_raises_value_error(self) -> None:
+        """Both guard and context_guard should raise ValueError."""
+        with pytest.raises(ValueError, match='Only one of guard or context_guard'):
+            InputGuardrail(guard=lambda text: True, context_guard=lambda ctx, text: True)
+
+
+# ---------------------------------------------------------------------------
+# OutputGuardrail — warn mode and context_guard
+# ---------------------------------------------------------------------------
+
+
+class TestOutputGuardrailWarn:
+    async def test_warn_mode_logs_instead_of_raising(self, caplog: pytest.LogCaptureFixture) -> None:
+        """In warn mode, a failing guard should log and pass the result through."""
+        agent = Agent(
+            TestModel(custom_output_text='bad output'),
+            capabilities=[OutputGuardrail(guard=lambda text: False, on_fail='warn')],
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_harness.guardrails'):
+            result = await agent.run('Hello')
+        assert result.output == 'bad output'
+        assert 'Output blocked by guardrail' in caplog.text
+
+    async def test_warn_mode_no_log_when_passing(self, caplog: pytest.LogCaptureFixture) -> None:
+        """In warn mode, a passing guard should not log."""
+        agent = Agent(
+            TestModel(custom_output_text='good output'),
+            capabilities=[OutputGuardrail(guard=lambda text: True, on_fail='warn')],
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_harness.guardrails'):
+            result = await agent.run('Hello')
+        assert result.output == 'good output'
+        assert 'Output blocked' not in caplog.text
+
+    async def test_context_guard_receives_ctx_and_text(self) -> None:
+        """context_guard should receive RunContext and the output text."""
+        received_text: list[str] = []
+
+        def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            received_text.append(text)
+            return True
+
+        agent = Agent(
+            TestModel(custom_output_text='hello world'),
+            capabilities=[OutputGuardrail(context_guard=ctx_guard)],
+        )
+        await agent.run('test')
+        assert received_text == ['hello world']
+
+    async def test_context_guard_blocks(self) -> None:
+        """context_guard returning False should raise OutputBlocked."""
+
+        def ctx_guard(ctx: RunContext[Any], text: str) -> bool:
+            return False
+
+        agent = Agent(
+            TestModel(custom_output_text='bad'),
+            capabilities=[OutputGuardrail(context_guard=ctx_guard)],
+        )
+        with pytest.raises(OutputBlocked):
+            await agent.run('Hello')
+
+    def test_no_guard_raises_value_error(self) -> None:
+        """Neither guard nor context_guard should raise ValueError."""
+        with pytest.raises(ValueError, match='Either guard or context_guard must be provided'):
+            OutputGuardrail()
+
+    def test_both_guards_raises_value_error(self) -> None:
+        """Both guard and context_guard should raise ValueError."""
+        with pytest.raises(ValueError, match='Only one of guard or context_guard'):
+            OutputGuardrail(guard=lambda text: True, context_guard=lambda ctx, text: True)
+
+
+# ---------------------------------------------------------------------------
+# GuardrailResult
+# ---------------------------------------------------------------------------
+
+
+class TestGuardrailResult:
+    def test_passed(self) -> None:
+        r = GuardrailResult(passed=True, reason='all good')
+        assert r.passed is True
+        assert r.reason == 'all good'
+
+    def test_failed(self) -> None:
+        r = GuardrailResult(passed=False, reason='prompt injection detected')
+        assert r.passed is False
+        assert r.reason == 'prompt injection detected'
+
+    def test_default_reason(self) -> None:
+        r = GuardrailResult(passed=True)
+        assert r.reason == ''
+
+    def test_frozen(self) -> None:
+        r = GuardrailResult(passed=True)
+        with pytest.raises(AttributeError):
+            r.passed = False  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# GuardrailFailed exception
+# ---------------------------------------------------------------------------
+
+
+class TestGuardrailFailedException:
+    def test_hierarchy(self) -> None:
+        assert issubclass(GuardrailFailed, GuardrailError)
+
+    def test_attributes(self) -> None:
+        result = GuardrailResult(passed=False, reason='bad input')
+        err = GuardrailFailed(result)
+        assert err.result is result
+        assert 'Guardrail failed: bad input' in str(err)
+
+
+# ---------------------------------------------------------------------------
+# AsyncGuardrail — blocking mode
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncGuardrailBlocking:
+    async def test_blocking_passes(self) -> None:
+        """In blocking mode, a passing guard should allow the model call."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=True)
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=guard, mode='blocking')])
+        result = await agent.run('Hello')
+        assert result.output is not None
+
+    async def test_blocking_fails(self) -> None:
+        """In blocking mode, a failing guard should raise GuardrailFailed."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=False, reason='blocked')
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=guard, mode='blocking')])
+        with pytest.raises(GuardrailFailed, match='blocked'):
+            await agent.run('Hello')
+
+    async def test_blocking_model_not_called_on_failure(self) -> None:
+        """In blocking mode, the model should never be called if the guard fails."""
+        model_called = False
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=False, reason='nope')
+
+        guardrail = AsyncGuardrail(guard=guard, mode='blocking')
+        ctx = _make_run_context()
+        req_ctx = _make_model_request_context()
+
+        async def mock_handler(rc: Any) -> Any:
+            nonlocal model_called
+            model_called = True  # pragma: no cover
+
+        with pytest.raises(GuardrailFailed):
+            await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=mock_handler)
+        assert not model_called
+
+
+# ---------------------------------------------------------------------------
+# AsyncGuardrail — monitoring mode
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncGuardrailMonitoring:
+    async def test_monitoring_passes(self) -> None:
+        """In monitoring mode, a passing guard should return the model result."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=True)
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=guard, mode='monitoring')])
+        result = await agent.run('Hello')
+        assert result.output is not None
+
+    async def test_monitoring_logs_failure(self, caplog: pytest.LogCaptureFixture) -> None:
+        """In monitoring mode, a failing guard should log but not raise."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=False, reason='suspicious content')
+
+        agent = Agent(
+            TestModel(custom_output_text='model output'),
+            capabilities=[AsyncGuardrail(guard=guard, mode='monitoring')],
+        )
+        with caplog.at_level(logging.WARNING, logger='pydantic_harness.guardrails'):
+            result = await agent.run('Hello')
+        assert result.output == 'model output'
+        assert 'suspicious content' in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# AsyncGuardrail — concurrent mode
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncGuardrailConcurrent:
+    async def test_concurrent_both_pass(self) -> None:
+        """In concurrent mode, when guard passes, model result should be returned."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=True)
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=guard, mode='concurrent')])
+        result = await agent.run('Hello')
+        assert result.output is not None
+
+    async def test_concurrent_guard_fails(self) -> None:
+        """In concurrent mode, a failing guard should cancel model and raise."""
+
+        async def guard(messages: list[ModelMessage]) -> GuardrailResult:
+            return GuardrailResult(passed=False, reason='injection detected')
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=guard, mode='concurrent')])
+        with pytest.raises(GuardrailFailed, match='injection detected'):
+            await agent.run('Hello')
+
+    async def test_concurrent_guard_fails_first_cancels_model(self) -> None:
+        """When the guard finishes before the model and fails, model should be cancelled."""
+        model_completed = False
+
+        async def slow_guard(messages: list[ModelMessage]) -> GuardrailResult:
+            # Finishes immediately with failure
+            return GuardrailResult(passed=False, reason='fast fail')
+
+        guardrail = AsyncGuardrail(guard=slow_guard, mode='concurrent')
+        ctx = _make_run_context()
+        req_ctx = _make_model_request_context()
+
+        async def slow_handler(rc: Any) -> Any:
+            nonlocal model_completed
+            await asyncio.sleep(10)  # pragma: no cover
+            model_completed = True  # pragma: no cover
+
+        with pytest.raises(GuardrailFailed, match='fast fail'):
+            await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=slow_handler)
+        assert not model_completed
+
+    async def test_concurrent_model_finishes_first_guard_still_checked(self) -> None:
+        """When the model finishes first but guard eventually fails, should still raise."""
+        guard_event = asyncio.Event()
+
+        async def delayed_guard(messages: list[ModelMessage]) -> GuardrailResult:
+            await guard_event.wait()
+            return GuardrailResult(passed=False, reason='late failure')
+
+        guardrail = AsyncGuardrail(guard=delayed_guard, mode='concurrent')
+        ctx = _make_run_context()
+        req_ctx = _make_model_request_context()
+
+        from pydantic_ai.messages import ModelResponse, TextPart
+
+        async def fast_handler(rc: Any) -> ModelResponse:
+            # Set the event so the guard can continue after model finishes
+            guard_event.set()
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        with pytest.raises(GuardrailFailed, match='late failure'):
+            await guardrail.wrap_model_request(ctx, request_context=req_ctx, handler=fast_handler)
+
+    async def test_concurrent_default_mode(self) -> None:
+        """The default mode should be 'concurrent'."""
+        guard = AsyncMock(return_value=GuardrailResult(passed=True))
+        guardrail = AsyncGuardrail(guard=guard)
+        assert guardrail.mode == 'concurrent'
+
+
+# ---------------------------------------------------------------------------
+# AsyncGuardrail — context-aware guard (2-arg)
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncGuardrailWithContext:
+    async def test_guard_receives_ctx_and_messages(self) -> None:
+        """A 2-arg guard should receive RunContext and messages."""
+        received_ctx: list[RunContext[Any]] = []
+        received_msgs: list[list[ModelMessage]] = []
+
+        async def ctx_guard(ctx: RunContext[Any], messages: list[ModelMessage]) -> GuardrailResult:
+            received_ctx.append(ctx)
+            received_msgs.append(messages)
+            return GuardrailResult(passed=True)
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=ctx_guard, mode='blocking')])
+        await agent.run('Hello')
+        assert len(received_ctx) == 1
+        assert len(received_msgs) == 1
+
+    async def test_1arg_guard_receives_only_messages(self) -> None:
+        """A 1-arg guard should receive only messages."""
+        received_msgs: list[list[ModelMessage]] = []
+
+        async def msg_guard(messages: list[ModelMessage]) -> GuardrailResult:
+            received_msgs.append(messages)
+            return GuardrailResult(passed=True)
+
+        agent = Agent(TestModel(), capabilities=[AsyncGuardrail(guard=msg_guard, mode='blocking')])
+        await agent.run('Hello')
+        assert len(received_msgs) == 1
+
+
+# ---------------------------------------------------------------------------
+# AsyncGuardrail — misc
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncGuardrailMisc:
+    def test_not_serializable(self) -> None:
+        """AsyncGuardrail should not be spec-serializable."""
+        assert AsyncGuardrail.get_serialization_name() is None
+
+
+# ---------------------------------------------------------------------------
+# Import tests
+# ---------------------------------------------------------------------------
+
+
 class TestImports:
     def test_import_from_package(self) -> None:
         """All public symbols should be importable from the package root."""
         from pydantic_harness import (
+            AsyncGuardrail,
             BudgetExceededError,
             CostGuard,
             GuardrailError,
+            GuardrailFailed,
+            GuardrailResult,
             InputBlocked,
             InputGuardrail,
             OutputBlocked,
@@ -435,6 +821,7 @@ class TestImports:
             ToolGuard,
         )
 
+        assert AsyncGuardrail is not None
         assert InputGuardrail is not None
         assert OutputGuardrail is not None
         assert CostGuard is not None
@@ -444,13 +831,18 @@ class TestImports:
         assert OutputBlocked is not None
         assert BudgetExceededError is not None
         assert ToolBlocked is not None
+        assert GuardrailResult is not None
+        assert GuardrailFailed is not None
 
     def test_import_from_guardrails_module(self) -> None:
         """All public symbols should be importable from the guardrails module."""
         from pydantic_harness.guardrails import (
+            AsyncGuardrail,
             BudgetExceededError,
             CostGuard,
             GuardrailError,
+            GuardrailFailed,
+            GuardrailResult,
             InputBlocked,
             InputGuardrail,
             OutputBlocked,
@@ -459,6 +851,7 @@ class TestImports:
             ToolGuard,
         )
 
+        assert AsyncGuardrail is not None
         assert InputGuardrail is not None
         assert OutputGuardrail is not None
         assert CostGuard is not None
@@ -468,6 +861,8 @@ class TestImports:
         assert OutputBlocked is not None
         assert BudgetExceededError is not None
         assert ToolBlocked is not None
+        assert GuardrailResult is not None
+        assert GuardrailFailed is not None
 
 
 # ---------------------------------------------------------------------------
@@ -500,3 +895,12 @@ class _MockRequestContext:
 def _mock_request_context() -> Any:
     """Create a mock request context for CostGuard tests."""
     return _MockRequestContext()
+
+
+def _make_model_request_context() -> Any:
+    """Create a mock ModelRequestContext with a messages list for AsyncGuardrail tests."""
+
+    class _Ctx:
+        messages: list[ModelMessage] = []
+
+    return _Ctx()

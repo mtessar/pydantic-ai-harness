@@ -8,9 +8,12 @@ Usage:
 # Capabilities are listed alphabetically.
 
 from pydantic_harness.guardrails import (
+    AsyncGuardrail,
     BudgetExceededError,
     CostGuard,
     GuardrailError,
+    GuardrailFailed,
+    GuardrailResult,
     InputBlocked,
     InputGuardrail,
     OutputBlocked,
@@ -20,9 +23,12 @@ from pydantic_harness.guardrails import (
 )
 
 __all__: list[str] = [
+    'AsyncGuardrail',
     'BudgetExceededError',
     'CostGuard',
     'GuardrailError',
+    'GuardrailFailed',
+    'GuardrailResult',
     'InputBlocked',
     'InputGuardrail',
     'OutputBlocked',

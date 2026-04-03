@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Any, TypedDict, cast
+from typing import Annotated, Any, TypedDict, cast
 
-from pydantic import TypeAdapter
+from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT
@@ -16,8 +16,8 @@ from typing_extensions import NotRequired
 
 
 class _RunCodeArguments(TypedDict):
-    code: str
-    restart: NotRequired[bool]  # resets REPL state when True, preserves state by default`gi
+    code: Annotated[str, Field(description='The Python code to execute in the sandbox.')]
+    restart: NotRequired[Annotated[bool, Field(description='Set to true to reset REPL state. When false (default), state is preserved between calls.')]]
 
 
 _RUN_CODE_TOOL_NAME = 'run_code'

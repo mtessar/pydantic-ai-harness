@@ -9,6 +9,7 @@ while only the LLM sees the truncated version.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -41,15 +42,41 @@ May be sync or async.
 """
 
 
+# Regex matching ANSI escape sequences (CSI sequences, OSC sequences, and simple escapes).
+# Terminal/bash tool output is full of color codes that waste tokens and confuse models.
+# Both Mastra and Hermes strip ANSI before sending output to the model.
+_ANSI_ESCAPE_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[^[\]()]')
+
+
+def _strip_ansi(text: str) -> str:
+    """Remove ANSI escape sequences from *text*."""
+    return _ANSI_ESCAPE_RE.sub('', text)
+
+
 def _head_tail_default_split(limit: int) -> tuple[int, int]:
-    """Split a character limit into head and tail portions (60/40)."""
-    head = int(limit * 0.6)
+    """Split a character limit into head and tail portions (40/60).
+
+    The split is tail-heavy because for the most common large-output
+    scenarios (build logs, test output, command stderr) the actionable
+    information — errors, summaries, exit codes — tends to appear at the
+    end.  This matches the convention used by Hermes (40/60) and Mastra
+    (10/90).  Per-tool strategy overrides can still be used when the
+    beginning matters more (e.g. file reads).
+    """
+    head = int(limit * 0.4)
     tail = limit - head
     return head, tail
 
 
 def _truncate(text: str, limit: int, strategy: TruncationStrategy) -> str:
-    """Apply a truncation strategy to *text* that exceeds *limit* chars."""
+    """Apply a truncation strategy to *text* that exceeds *limit* chars.
+
+    Note: truncation is character-level and structure-unaware.  If the tool
+    returned JSON, the truncated result will be invalid JSON.  A future
+    improvement could detect structured formats and truncate more
+    intelligently (e.g. elide large array elements while preserving the
+    schema), but no framework we've surveyed does this today.
+    """
     total = len(text)
     if total <= limit:
         return text
@@ -139,7 +166,14 @@ class ToolOutputManagement(AbstractCapability[AgentDepsT]):
 
     max_output_chars: int = 10_000
     """Default character limit for tool outputs.  Outputs exceeding this
-    are truncated according to `strategy`."""
+    are truncated according to `strategy`.
+
+    Note: character limits are a simple, model-independent proxy.  A future
+    ``max_output_tokens`` option using model-specific tokenizers would give
+    more accurate budget control (characters are roughly a 4x overestimate
+    for English text).  This depends on token-counting infrastructure that
+    does not yet exist in pydantic-ai (see ContextWindowTracker / #35).
+    """
 
     max_output_lines: int | None = None
     """Optional line-count limit for tool outputs.
@@ -173,16 +207,36 @@ class ToolOutputManagement(AbstractCapability[AgentDepsT]):
     the limit, it is truncated as a safety net.
 
     May be sync or async.
+
+    Warning: if the callable wraps an LLM call, be aware that this
+    capability provides no timeout, retry, or cost guardrails — only a
+    size safety net.  Callers are responsible for adding their own
+    timeout / error handling inside the function.  Hermes, for example,
+    dedicates a cheap model (Gemini Flash) specifically for this purpose.
     """
 
     spill_to_file: bool = False
     """When True, oversized output is written to a temporary file and
     the model receives a pointer to that file plus a truncated preview.
+
+    The file path is embedded in the returned string (e.g.
+    ``[Full output (N chars) saved to /tmp/...]``).  Pi-mono takes an
+    alternative approach, returning structured metadata
+    (``details.truncation``) which is more machine-parseable if another
+    capability needs to act on it.  A structured return would require
+    changes to the ``after_tool_execute`` contract, so for now we use
+    the simpler string-embedded pointer.
     """
 
     spill_dir: Path | None = None
     """Directory for spill files.  Defaults to the system temp directory
     when `spill_to_file` is True and this is None.
+    """
+
+    strip_ansi: bool = True
+    """Strip ANSI escape sequences from tool output before measuring and
+    truncating.  ANSI color/formatting codes from terminal output waste
+    tokens and can confuse models.  Enabled by default.
     """
 
     def _exceeds_limits(self, text: str, char_limit: int, line_limit: int | None) -> bool:
@@ -243,11 +297,16 @@ class ToolOutputManagement(AbstractCapability[AgentDepsT]):
             return f'[Binary data, {size:,} bytes]'
 
         text = _stringify(result)
+        stripped = self.strip_ansi
+        if stripped:
+            text = _strip_ansi(text)
         char_limit = self.per_tool_limits.get(call.tool_name, self.max_output_chars)
         line_limit = self.per_tool_line_limits.get(call.tool_name, self.max_output_lines)
 
         if not self._exceeds_limits(text, char_limit, line_limit):
-            return result
+            # If we stripped ANSI, return the cleaned text so the model
+            # never sees escape codes.  Otherwise return the original value.
+            return text if stripped else result
 
         strategy = self.per_tool_strategies.get(call.tool_name, self.strategy)
 

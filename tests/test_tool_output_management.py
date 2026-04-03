@@ -24,6 +24,9 @@ from pydantic_harness.tool_output_management import (
     _stringify as stringify,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_harness.tool_output_management import (
+    _strip_ansi as strip_ansi,  # pyright: ignore[reportPrivateUsage]
+)
+from pydantic_harness.tool_output_management import (
     _truncate as truncate,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_harness.tool_output_management import (
@@ -66,8 +69,8 @@ class TestStringify:
 class TestHeadTailSplit:
     def test_split_100(self) -> None:
         head, tail = head_tail_default_split(100)
-        assert head == 60
-        assert tail == 40
+        assert head == 40
+        assert tail == 60
 
     def test_split_sums_to_limit(self) -> None:
         for limit in (1, 10, 77, 1000, 9999):
@@ -100,11 +103,11 @@ class TestTruncate:
     def test_head_tail_strategy(self) -> None:
         text = 'H' * 100 + 'M' * 800 + 'T' * 100
         result = truncate(text, 100, TruncationStrategy.head_tail)
-        # head=60 chars, tail=40 chars
-        assert result.startswith('H' * 60)
-        assert result.endswith('T' * 40)
+        # head=40 chars, tail=60 chars (tail-heavy split)
+        assert result.startswith('H' * 40)
+        assert result.endswith('T' * 60)
         assert 'omitted from middle' in result
-        assert '900' in result  # 1000 - 60 - 40 = 900 omitted
+        assert '900' in result  # 1000 - 40 - 60 = 900 omitted
 
     def test_head_tail_exact_boundary(self) -> None:
         text = 'x' * 100
@@ -356,6 +359,87 @@ class TestIsBinary:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: strip_ansi
+# ---------------------------------------------------------------------------
+
+
+class TestStripAnsi:
+    def test_plain_text_unchanged(self) -> None:
+        assert strip_ansi('hello world') == 'hello world'
+
+    def test_strips_color_codes(self) -> None:
+        text = '\x1b[31mERROR\x1b[0m: something failed'
+        assert strip_ansi(text) == 'ERROR: something failed'
+
+    def test_strips_bold_and_reset(self) -> None:
+        text = '\x1b[1mBold\x1b[0m Normal'
+        assert strip_ansi(text) == 'Bold Normal'
+
+    def test_strips_multiple_sequences(self) -> None:
+        text = '\x1b[32m✓\x1b[0m test1\n\x1b[31m✗\x1b[0m test2'
+        assert strip_ansi(text) == '✓ test1\n✗ test2'
+
+    def test_empty_string(self) -> None:
+        assert strip_ansi('') == ''
+
+
+class TestStripAnsiIntegration:
+    @pytest.mark.anyio
+    async def test_ansi_stripped_before_measurement(self) -> None:
+        """ANSI codes should be stripped before size check so they don't count toward limit."""
+        cap: ToolOutputManagement[None] = ToolOutputManagement(max_output_chars=50)
+        # 30 visible chars wrapped in many ANSI codes pushes raw length over 50
+        ansi_text = '\x1b[1m\x1b[31m\x1b[4m' + 'x' * 30 + '\x1b[0m\x1b[0m\x1b[0m'
+        assert len(ansi_text) > 50  # raw is over limit
+        assert len(strip_ansi(ansi_text)) == 30  # stripped is under
+        result = await cap.after_tool_execute(
+            None,  # type: ignore[arg-type]
+            call=CALL,
+            tool_def=TOOL_DEF,
+            args={},
+            result=ansi_text,
+        )
+        # The stripped text (30 chars) is under the limit, so no truncation.
+        # The cleaned (ANSI-free) text is returned so the model never sees escape codes.
+        assert result == 'x' * 30
+        assert '\x1b[' not in result
+
+    @pytest.mark.anyio
+    async def test_ansi_stripped_in_truncated_output(self) -> None:
+        """When output is truncated, ANSI codes should be stripped from the result."""
+        cap: ToolOutputManagement[None] = ToolOutputManagement(max_output_chars=20)
+        ansi_text = '\x1b[31m' + 'x' * 100 + '\x1b[0m'
+        result = await cap.after_tool_execute(
+            None,  # type: ignore[arg-type]
+            call=CALL,
+            tool_def=TOOL_DEF,
+            args={},
+            result=ansi_text,
+        )
+        assert '\x1b[' not in result
+        assert 'Truncated' in result
+
+    @pytest.mark.anyio
+    async def test_strip_ansi_disabled(self) -> None:
+        """When strip_ansi=False, ANSI codes are preserved."""
+        cap: ToolOutputManagement[None] = ToolOutputManagement(
+            max_output_chars=20,
+            strip_ansi=False,
+        )
+        ansi_text = '\x1b[31m' + 'x' * 100 + '\x1b[0m'
+        result = await cap.after_tool_execute(
+            None,  # type: ignore[arg-type]
+            call=CALL,
+            tool_def=TOOL_DEF,
+            args={},
+            result=ansi_text,
+        )
+        assert 'Truncated' in result
+        # ANSI codes should still be present in the truncated portion
+        assert '\x1b[' in result
+
+
+# ---------------------------------------------------------------------------
 # Unit tests: truncate_by_lines
 # ---------------------------------------------------------------------------
 
@@ -380,11 +464,11 @@ class TestTruncateByLines:
     def test_head_tail_strategy(self) -> None:
         text = '\n'.join(f'line{i}' for i in range(100))
         result = truncate_by_lines(text, 10, TruncationStrategy.head_tail)
-        # head=6 lines, tail=4 lines
+        # head=4 lines, tail=6 lines (tail-heavy split)
         assert 'line0' in result
         assert 'line99' in result
         assert 'omitted from middle' in result
-        assert '90' in result  # 100 - 6 - 4 = 90 omitted
+        assert '90' in result  # 100 - 4 - 6 = 90 omitted
 
     def test_exact_boundary(self) -> None:
         text = 'line1\nline2\nline3'

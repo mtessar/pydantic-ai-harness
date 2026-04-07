@@ -631,7 +631,8 @@ wheels = [
 
 [[package]]
 name = "pydantic-ai-slim"
-source = { directory = "/home/DouweM/pydantic-ai-worktrees/python-sigs/pydantic_ai_slim" }
+version = "1.76.1.dev58+77134e4e"
+source = { git = "https://github.com/pydantic/pydantic-ai.git?subdirectory=pydantic_ai_slim&branch=return-schema-unification#77134e4e6837e8f893b821e76bd8c5826810f54f" }
 dependencies = [
     { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
     { name = "genai-prices" },
@@ -642,71 +643,6 @@ dependencies = [
     { name = "pydantic-graph" },
     { name = "typing-inspection" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "ag-ui-protocol", marker = "extra == 'ag-ui'", specifier = ">=0.1.10" },
-    { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.80.0" },
-    { name = "argcomplete", marker = "extra == 'cli'", specifier = ">=3.5.0" },
-    { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.42.14" },
-    { name = "cohere", marker = "sys_platform != 'emscripten' and extra == 'cohere'", specifier = ">=5.20.6" },
-    { name = "dbos", marker = "extra == 'dbos'", specifier = ">=2.10.0" },
-    { name = "ddgs", marker = "extra == 'duckduckgo'", specifier = ">=9.0.0" },
-    { name = "exa-py", marker = "extra == 'exa'", specifier = ">=2.0.0" },
-    { name = "exceptiongroup", marker = "python_full_version < '3.11'", specifier = ">=1.2.2" },
-    { name = "fasta2a", marker = "extra == 'a2a'", specifier = ">=0.4.1" },
-    { name = "fastmcp", marker = "extra == 'fastmcp'", specifier = ">=2.14.0" },
-    { name = "genai-prices", specifier = ">=0.0.48" },
-    { name = "google-auth", marker = "extra == 'vertexai'", specifier = ">=2.36.0" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=1.66.0" },
-    { name = "griffelib", specifier = ">=2.0" },
-    { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "httpx", marker = "extra == 'web'", specifier = ">=0.27.0" },
-    { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
-    { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.16.0" },
-    { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
-    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.25.0,<2.0" },
-    { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=2.0.0" },
-    { name = "openai", marker = "extra == 'openai'", specifier = ">=2.29.0" },
-    { name = "openai", marker = "extra == 'openrouter'", specifier = ">=2.8.0" },
-    { name = "opentelemetry-api", specifier = ">=1.28.0" },
-    { name = "outlines", marker = "python_full_version < '3.14' and extra == 'outlines-vllm-offline'", specifier = ">=1.0.0,<1.3.0" },
-    { name = "outlines", extras = ["llamacpp"], marker = "python_full_version < '3.14' and extra == 'outlines-llamacpp'", specifier = ">=1.0.0,<1.3.0" },
-    { name = "outlines", extras = ["mlxlm"], marker = "python_full_version < '3.14' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'outlines-mlxlm'", specifier = ">=1.0.0,<1.3.0" },
-    { name = "outlines", extras = ["sglang"], marker = "python_full_version < '3.14' and extra == 'outlines-sglang'", specifier = ">=1.0.0,<1.3.0" },
-    { name = "outlines", extras = ["transformers"], marker = "(python_full_version < '3.14' and platform_machine != 'x86_64' and extra == 'outlines-transformers') or (python_full_version < '3.14' and sys_platform != 'darwin' and extra == 'outlines-transformers')", specifier = ">=1.0.0,<1.3.0" },
-    { name = "pillow", marker = "python_full_version < '3.14' and extra == 'outlines-sglang'", specifier = ">=12.1.1" },
-    { name = "pillow", marker = "python_full_version < '3.14' and extra == 'outlines-transformers'", specifier = ">=12.1.1" },
-    { name = "prefect", marker = "extra == 'prefect'", specifier = ">=3.4.21" },
-    { name = "prompt-toolkit", marker = "extra == 'cli'", specifier = ">=3" },
-    { name = "pydantic", specifier = ">=2.12" },
-    { name = "pydantic-evals", marker = "extra == 'evals'", editable = "../../pydantic-ai-worktrees/python-sigs/pydantic_evals" },
-    { name = "pydantic-graph", editable = "../../pydantic-ai-worktrees/python-sigs/pydantic_graph" },
-    { name = "pydantic-handlebars", marker = "extra == 'spec'", specifier = ">=0.1.0" },
-    { name = "pyperclip", marker = "extra == 'cli'", specifier = ">=1.9.0" },
-    { name = "pyyaml", marker = "extra == 'cli'", specifier = ">=6.0.2" },
-    { name = "pyyaml", marker = "extra == 'spec'", specifier = ">=6.0.2" },
-    { name = "requests", marker = "extra == 'vertexai'", specifier = ">=2.32.2" },
-    { name = "rich", marker = "extra == 'cli'", specifier = ">=13" },
-    { name = "sentence-transformers", marker = "python_full_version < '3.14' and extra == 'sentence-transformers'", specifier = ">=5.2.0" },
-    { name = "starlette", marker = "extra == 'ag-ui'", specifier = ">=0.45.3" },
-    { name = "starlette", marker = "extra == 'ui'", specifier = ">=0.45.3" },
-    { name = "starlette", marker = "extra == 'web'", specifier = ">=0.45.3" },
-    { name = "tavily-python", marker = "extra == 'tavily'", specifier = ">=0.5.0" },
-    { name = "temporalio", marker = "extra == 'temporal'", specifier = ">=1.24.0" },
-    { name = "tenacity", marker = "extra == 'retries'", specifier = ">=8.2.3" },
-    { name = "tiktoken", marker = "extra == 'openai'", specifier = ">=0.12.0" },
-    { name = "torch", marker = "(python_full_version < '3.14' and platform_machine != 'x86_64' and extra == 'outlines-transformers') or (python_full_version < '3.14' and sys_platform != 'darwin' and extra == 'outlines-transformers')", specifier = ">=2.8.0" },
-    { name = "torch", marker = "(python_full_version < '3.14' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.14' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')", specifier = ">=2.8.0" },
-    { name = "transformers", marker = "python_full_version < '3.14' and extra == 'outlines-transformers'", specifier = ">=4.0.0" },
-    { name = "typing-inspection", specifier = ">=0.4.0" },
-    { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.38.0" },
-    { name = "vllm", marker = "(python_full_version < '3.12' and platform_machine != 'x86_64' and extra == 'outlines-vllm-offline') or (python_full_version < '3.12' and sys_platform != 'darwin' and extra == 'outlines-vllm-offline')", specifier = ">=0.15.0" },
-    { name = "voyageai", marker = "python_full_version < '3.14' and extra == 'voyageai'", specifier = ">=0.3.7" },
-    { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.5.0" },
-]
-provides-extras = ["a2a", "ag-ui", "anthropic", "bedrock", "cli", "cohere", "dbos", "duckduckgo", "evals", "exa", "fastmcp", "google", "groq", "huggingface", "logfire", "mcp", "mistral", "openai", "openrouter", "outlines-llamacpp", "outlines-mlxlm", "outlines-sglang", "outlines-transformers", "outlines-vllm-offline", "prefect", "retries", "sentence-transformers", "spec", "tavily", "temporal", "ui", "vertexai", "voyageai", "web", "web-fetch", "xai"]
 
 [[package]]
 name = "pydantic-core"
@@ -828,20 +764,13 @@ wheels = [
 
 [[package]]
 name = "pydantic-graph"
-source = { editable = "../../pydantic-ai-worktrees/python-sigs/pydantic_graph" }
+version = "1.76.1.dev58+77134e4e"
+source = { git = "https://github.com/pydantic/pydantic-ai.git?subdirectory=pydantic_graph&branch=return-schema-unification#77134e4e6837e8f893b821e76bd8c5826810f54f" }
 dependencies = [
     { name = "httpx" },
     { name = "logfire-api" },
     { name = "pydantic" },
     { name = "typing-inspection" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "logfire-api", specifier = ">=3.14.1" },
-    { name = "pydantic", specifier = ">=2.12" },
-    { name = "typing-inspection", specifier = ">=0.4.0" },
 ]
 
 [[package]]
@@ -867,7 +796,7 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
-    { name = "pydantic-ai-slim", directory = "/home/DouweM/pydantic-ai-worktrees/python-sigs/pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", git = "https://github.com/pydantic/pydantic-ai.git?subdirectory=pydantic_ai_slim&branch=return-schema-unification" },
     { name = "pydantic-monty", git = "https://github.com/pydantic/monty.git?subdirectory=crates%2Fmonty-python&branch=main" },
 ]
 

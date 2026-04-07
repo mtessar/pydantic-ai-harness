@@ -8,8 +8,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import Annotated, Any, cast
 
-from typing_extensions import NotRequired, TypedDict
-
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.exceptions import ModelRetry
@@ -26,7 +24,7 @@ from pydantic_monty import (
     MontySyntaxError,
     MontyTypingError,
 )
-
+from typing_extensions import NotRequired, TypedDict
 
 
 class _RunCodeArguments(TypedDict):

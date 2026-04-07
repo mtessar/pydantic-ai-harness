@@ -8,7 +8,7 @@ loaded by the project (no extra dev dependency needed).
 
 from __future__ import annotations
 
-from typing import Any, TypedDict, TypeVar
+from typing import Any, TypeVar
 
 import pytest
 from pydantic_ai import (
@@ -26,6 +26,7 @@ from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import Monty, MontyRepl, MontyTypingError
+from typing_extensions import TypedDict
 
 from pydantic_harness.capabilities import CodeMode
 from pydantic_harness.toolsets import CodeModeToolset

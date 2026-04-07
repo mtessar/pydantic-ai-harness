@@ -1,12 +1,12 @@
 """Code mode capability that routes selected tools through a Monty sandbox."""
 
-from collections.abc import Callable
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Literal
 
 from pydantic_ai import AbstractToolset, CombinedToolset, FilteredToolset, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 
 from pydantic_harness.toolsets import CodeModeToolset
 
@@ -19,23 +19,29 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     `run_code` tool — the model writes Python that calls them as functions instead
     of issuing tool calls directly.
 
-    Pass a callable to `tools` to split the toolset: tools the predicate accepts
-    become callables inside the sandbox, and the rest stay visible to the model
-    as normal tool calls. The callable shape matches
-    [`FilteredToolset.filter_func`][pydantic_ai.toolsets.FilteredToolset], so the
-    same predicate can be reused with either.
+    Pass a list of tool names or a callable predicate to `tools` to split the
+    toolset: matching tools become callables inside the sandbox, and the rest
+    stay visible to the model as normal tool calls.
+
+    ```python
+    from pydantic_ai import Agent
+    from pydantic_harness.capabilities import CodeMode
+
+    # Sandbox all tools
+    agent = Agent('openai:gpt-5', capabilities=[CodeMode()])
+
+    # Sandbox only specific tools
+    agent = Agent('openai:gpt-5', capabilities=[CodeMode(tools=['search', 'fetch'])])
+    ```
     """
 
-    # Inline `Callable[[RunContext[AgentDepsT], ToolDefinition], bool]` to match the
-    # spelling pydantic-ai uses on `FilteredToolset.filter_func` and friends — there
-    # is no exported `ToolFilter` alias upstream, so we don't introduce one here.
-    tools: Literal['all'] | Callable[[RunContext[AgentDepsT], ToolDefinition], bool] = field(default='all')
+    tools: ToolSelector[AgentDepsT] = field(default='all')
     """Which wrapped tools should be sandboxed inside `run_code`.
 
-    - `'all'` (default): every tool the agent has is sandboxed.
-    - Callable `(ctx, tool_def) -> bool`: tools where the callable returns `True`
-      are sandboxed; tools where it returns `False` stay visible to the model
-      as native tool calls.
+    - ``'all'`` (default): every tool the agent has is sandboxed.
+    - ``Sequence[str]``: only tools whose names are listed are sandboxed.
+    - Callable ``(ctx, tool_def) -> bool | Awaitable[bool]``: tools where the
+      callable returns ``True`` are sandboxed; the rest stay as native tool calls.
     """
 
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
@@ -43,10 +49,14 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         if self.tools == 'all':
             return CodeModeToolset(wrapped=toolset)
 
-        tool_filter = self.tools
-        sandboxed = FilteredToolset(wrapped=toolset, filter_func=tool_filter)
-        native = FilteredToolset(
-            wrapped=toolset,
-            filter_func=lambda ctx, td: not tool_filter(ctx, td),
-        )
+        selector = self.tools
+
+        async def _sandboxed(ctx: RunContext[AgentDepsT], td: ToolDefinition) -> bool:
+            return await matches_tool_selector(selector, ctx, td)
+
+        async def _native(ctx: RunContext[AgentDepsT], td: ToolDefinition) -> bool:
+            return not await matches_tool_selector(selector, ctx, td)
+
+        sandboxed = FilteredToolset(wrapped=toolset, filter_func=_sandboxed)
+        native = FilteredToolset(wrapped=toolset, filter_func=_native)
         return CombinedToolset([native, CodeModeToolset(wrapped=sandboxed)])

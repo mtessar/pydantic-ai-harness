@@ -25,6 +25,7 @@ classifiers = [
     'Typing :: Typed',
 ]
 dependencies = [
+    "logfire[httpx]>=4.31.0",
     'pydantic-ai-slim>=1.76.0',
     "pydantic-monty>=0.0.9",
 ]

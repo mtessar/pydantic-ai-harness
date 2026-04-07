@@ -1,4 +1,4 @@
-"""Tests for the `CodeMode` capability and `CodeExecutionToolset`.
+"""Tests for the `CodeMode` capability and the `CodeModeToolset` it wraps.
 
 Style follows `pydantic_ai/tests/test_toolsets.py`: module-level
 `pytestmark = pytest.mark.anyio`, an `anyio_backend` fixture, async tests, and a
@@ -28,8 +28,8 @@ from pydantic_core import SchemaValidator, core_schema
 from pydantic_monty import Monty, MontyRepl, MontyTypingError
 
 from pydantic_harness.capabilities import CodeMode
-from pydantic_harness.toolsets import CodeExecutionToolset
-from pydantic_harness.toolsets.code_execution.run_code import (
+from pydantic_harness.toolsets import CodeModeToolset
+from pydantic_harness.toolsets.code_mode.run_code import (
     _PrintCapture,  # pyright: ignore[reportPrivateUsage]
 )
 
@@ -180,7 +180,7 @@ async def test_default_wraps_all_tools_behind_run_code() -> None:
     """`CodeMode()` exposes only `run_code` and renders every tool as an `async def`."""
     toolset = _build_function_toolset(add, greet)
     wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     tools = await wrapper.get_tools(build_run_context(None))
     assert list(tools.keys()) == ['run_code']
@@ -198,7 +198,7 @@ async def test_run_code_executes_call_through_monty() -> None:
     """End-to-end: `run_code` runs Python in Monty and dispatches to a sync wrapped tool."""
     toolset = _build_function_toolset(add)
     wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
@@ -218,7 +218,7 @@ async def test_run_code_executes_string_returning_tool_with_default_arg() -> Non
     (b) default-argument handling — the LLM-side code only passes `name`, not `greeting`.
     """
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(greet))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
     result = await wrapper.call_tool(
@@ -233,7 +233,7 @@ async def test_run_code_executes_string_returning_tool_with_default_arg() -> Non
 async def test_run_code_can_chain_multiple_tool_calls_in_one_snippet() -> None:
     """A realistic LLM snippet that calls two tools in one `run_code` invocation."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add, greet))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
     code = "total = await add(a=2, b=3)\nmsg = await greet(name=str(total), greeting='Result is')\nprint(msg)"
@@ -253,7 +253,7 @@ async def test_run_code_renders_no_arg_tool_signature() -> None:
         return '2026-04-08T12:00:00Z'
 
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(now_iso))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
 
@@ -275,7 +275,7 @@ async def test_run_code_renders_no_arg_tool_signature() -> None:
 async def test_run_code_state_persists_between_calls() -> None:
     """REPL state must survive across consecutive `run_code` calls within a run."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
@@ -290,7 +290,7 @@ async def test_run_code_state_persists_between_calls() -> None:
 async def test_run_code_restart_resets_repl_state() -> None:
     """Passing `restart=True` clears any previously-set names in the sandbox."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
@@ -306,7 +306,7 @@ async def test_run_code_restart_resets_repl_state() -> None:
 async def test_run_code_returns_last_expression_value() -> None:
     """When the last statement is an expression, its value is returned in `result`."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
     result = await wrapper.call_tool('run_code', {'code': '1 + 2'}, ctx, tools['run_code'])
@@ -316,7 +316,7 @@ async def test_run_code_returns_last_expression_value() -> None:
 async def test_run_code_syntax_error_becomes_model_retry() -> None:
     """A Python syntax error is surfaced as `ModelRetry` so the model can fix it."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
     with pytest.raises(ModelRetry, match=r'Syntax error in code'):
@@ -349,7 +349,7 @@ async def test_run_code_typing_error_becomes_model_retry(monkeypatch: pytest.Mon
     monkeypatch.setattr(MontyRepl, 'feed_run_async', _raise_typing_error)
 
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
 
@@ -373,7 +373,7 @@ async def test_run_code_typing_error_becomes_model_retry(monkeypatch: pytest.Mon
 async def test_for_run_returns_fresh_instance_with_cleared_repl() -> None:
     """`for_run` must hand back a new toolset instance — concurrent runs cannot share REPL state."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
 
     # Force lazy REPL creation on the *original* instance.
@@ -382,7 +382,7 @@ async def test_for_run_returns_fresh_instance_with_cleared_repl() -> None:
     assert wrapper._repl is not None  # pyright: ignore[reportPrivateUsage]
 
     fresh = await wrapper.for_run(ctx)
-    assert isinstance(fresh, CodeExecutionToolset)
+    assert isinstance(fresh, CodeModeToolset)
     assert fresh is not wrapper
     assert fresh._repl is None  # pyright: ignore[reportPrivateUsage]
 
@@ -390,7 +390,7 @@ async def test_for_run_returns_fresh_instance_with_cleared_repl() -> None:
 async def test_for_run_step_short_circuits_when_wrapped_unchanged() -> None:
     """If the inner toolset doesn't change between steps, `for_run_step` returns `self` unchanged."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
     same = await wrapper.for_run_step(ctx)
     assert same is wrapper
@@ -424,14 +424,14 @@ async def test_for_run_step_preserves_repl_when_wrapped_changes() -> None:
 
         async def for_run_step(self, ctx: RunContext[None]) -> AbstractToolset[None]:
             # Return a brand-new toolset on every step so `is` comparison fails in
-            # `CodeExecutionToolset.for_run_step`, forcing the rebuild branch.
+            # `CodeModeToolset.for_run_step`, forcing the rebuild branch.
             self._step += 1
             new_self = _SwappingToolset()
             new_self._step = self._step
             return new_self
 
     wrapper = CodeMode[None]().get_wrapper_toolset(_SwappingToolset())
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
     ctx = build_run_context(None)
 
     # Lazily create the REPL on the original instance.
@@ -441,7 +441,7 @@ async def test_for_run_step_preserves_repl_when_wrapped_changes() -> None:
     assert original_repl is not None
 
     next_step = await wrapper.for_run_step(ctx)
-    assert isinstance(next_step, CodeExecutionToolset)
+    assert isinstance(next_step, CodeModeToolset)
     assert next_step is not wrapper
     # State carries over so the LLM doesn't lose its variables between steps.
     assert next_step._repl is original_repl  # pyright: ignore[reportPrivateUsage]
@@ -504,7 +504,7 @@ async def test_filter_uses_run_context_for_dynamic_decisions() -> None:
 async def test_typed_dict_arguments_render_as_prelude() -> None:
     """Tools with structured (TypedDict) parameters render their types in the prelude."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(lookup_person))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     description = (await wrapper.get_tools(build_run_context(None)))['run_code'].tool_def.description
     assert description is not None
@@ -520,7 +520,7 @@ async def test_typed_dict_arguments_render_as_prelude() -> None:
 async def test_typed_dict_argument_round_trips_through_monty() -> None:
     """End-to-end with a structured argument: dict literal flows through Monty into the tool."""
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(lookup_person))
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
@@ -543,7 +543,7 @@ async def test_conflicting_typed_dicts_get_tool_name_prefix() -> None:
     )
 
     wrapper = CodeMode[None]().get_wrapper_toolset(static)
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     tools = await wrapper.get_tools(ctx)
@@ -585,7 +585,7 @@ async def test_deferred_tools_are_dropped_with_one_time_warning() -> None:
 
     toolset = FunctionToolset[None](tools=[Tool(add), Tool(later, defer_loading=True)])
     wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
-    assert isinstance(wrapper, CodeExecutionToolset)
+    assert isinstance(wrapper, CodeModeToolset)
 
     ctx = build_run_context(None)
     with pytest.warns(UserWarning, match=r"deferred tool 'later'"):

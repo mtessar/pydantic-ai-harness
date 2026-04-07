@@ -1,4 +1,4 @@
-"""Code execution toolset that runs LLM-generated Python in a Monty sandbox."""
+"""Code mode toolset that runs LLM-generated Python in a Monty sandbox."""
 
 from __future__ import annotations
 
@@ -72,8 +72,8 @@ The following functions are available inside the sandbox. Call them directly \
 
 
 @dataclass
-class CodeExecutionToolset(WrapperToolset[AgentDepsT]):
-    """Executes LLM-generated Python code in a Monty sandbox.
+class CodeModeToolset(WrapperToolset[AgentDepsT]):
+    """Implementation toolset for the [`CodeMode`][pydantic_harness.capabilities.CodeMode] capability.
 
     Exposes a single `run_code` tool. Tools from the wrapped toolset are
     presented to the model as Python function signatures inside the `run_code`

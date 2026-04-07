@@ -8,7 +8,7 @@ from pydantic_ai import AbstractToolset, CombinedToolset, FilteredToolset, RunCo
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT
 
-from pydantic_harness.toolsets import CodeExecutionToolset
+from pydantic_harness.toolsets import CodeModeToolset
 
 
 @dataclass
@@ -41,7 +41,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     def get_wrapper_toolset(self, toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT] | None:
         """Wrap the agent's assembled toolset, splitting it into native + sandboxed subsets if needed."""
         if self.tools == 'all':
-            return CodeExecutionToolset(wrapped=toolset)
+            return CodeModeToolset(wrapped=toolset)
 
         tool_filter = self.tools
         sandboxed = FilteredToolset(wrapped=toolset, filter_func=tool_filter)
@@ -49,4 +49,4 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             wrapped=toolset,
             filter_func=lambda ctx, td: not tool_filter(ctx, td),
         )
-        return CombinedToolset([native, CodeExecutionToolset(wrapped=sandboxed)])
+        return CombinedToolset([native, CodeModeToolset(wrapped=sandboxed)])

@@ -29,7 +29,7 @@ from typing_extensions import TypedDict
 
 from pydantic_harness import CodeMode
 from pydantic_harness.toolsets import CodeModeToolset
-from pydantic_harness.toolsets._code_mode.run_code import (  # pyright: ignore[reportPrivateUsage]
+from pydantic_harness.toolsets._code_mode import (  # pyright: ignore[reportPrivateUsage]
     _PrintCapture,
     _sanitize_tool_name,
 )

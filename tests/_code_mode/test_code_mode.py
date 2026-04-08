@@ -877,6 +877,69 @@ async def test_run_code_tool_has_code_metadata() -> None:
 
 
 # ---------------------------------------------------------------------------
+# OTel / Logfire instrumentation
+# ---------------------------------------------------------------------------
+
+try:
+    from logfire.testing import CaptureLogfire
+
+    logfire_installed = True
+except ImportError:  # pragma: no cover
+    logfire_installed = False
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_sandboxed_tool_calls_produce_otel_spans(capfire: CaptureLogfire) -> None:
+    """Sandboxed tool calls dispatched through ToolManager produce OTel execute_tool spans."""
+    from pydantic_ai.messages import (
+        ModelMessage,
+        ModelResponse,
+        TextPart,
+        ToolCallPart,
+    )
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+    from pydantic_ai.models.instrumented import InstrumentationSettings
+
+    call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': 'await add(a=1, b=2)'})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        FunctionModel(model_fn),
+        capabilities=[CodeMode[None]()],
+        instrument=InstrumentationSettings(include_content=True),
+    )
+
+    @agent.tool_plain
+    def add(a: int, b: int) -> int:  # pyright: ignore[reportUnusedFunction]
+        """Add two numbers."""
+        return a + b
+
+    result = await agent.run('test')
+    assert result.output == 'done'
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    tool_spans = [s for s in spans if s['attributes'].get('gen_ai.tool.name')]
+    tool_names = [s['attributes']['gen_ai.tool.name'] for s in tool_spans]
+
+    # The outer `run_code` tool call should produce a span.
+    assert 'run_code' in tool_names, f'No run_code span found in {tool_names}'
+
+    # The inner `add` tool call (dispatched through ToolManager) should also produce a span.
+    assert 'add' in tool_names, f'No add span found in {tool_names}'
+
+    # Verify the inner tool span has the expected OTel attributes.
+    add_span = next(s for s in tool_spans if s['attributes']['gen_ai.tool.name'] == 'add')
+    assert add_span['attributes']['gen_ai.tool.name'] == 'add'
+    assert 'gen_ai.tool.call.id' in add_span['attributes']
+
+
+# ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
 

@@ -941,6 +941,26 @@ async def test_approval_required_surfaces_as_model_retry() -> None:
         await wrapper.call_tool('run_code', {'code': 'await needs_approval()'}, ctx, tools['run_code'])
 
 
+async def test_model_retry_from_wrapped_tool_surfaces_as_model_retry() -> None:
+    """A wrapped tool that raises ModelRetry gets double-wrapped through Monty but still retries.
+
+    The flow is: ModelRetry → Monty catches as RuntimeError → MontyRuntimeError → ModelRetry.
+    The original error message is preserved in the display string.
+    """
+
+    def flaky() -> str:
+        """A tool that always retries."""
+        raise ModelRetry('try again please')
+
+    wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(flaky))
+    assert isinstance(wrapper, CodeModeToolset)
+    ctx = build_run_context(None)
+    tools = await wrapper.get_tools(ctx)
+
+    with pytest.raises(ModelRetry, match='try again please'):
+        await wrapper.call_tool('run_code', {'code': 'await flaky()'}, ctx, tools['run_code'])
+
+
 # ---------------------------------------------------------------------------
 # OTel / Logfire instrumentation
 # ---------------------------------------------------------------------------

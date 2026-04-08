@@ -390,9 +390,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         for td in callable_defs.values():
             assert td.function_signature is not None, f'function_signature missing for tool {td.name!r}'
             sigs.append(td.function_signature)
-        conflicting = FunctionSignature.dedup_referenced_types(sigs)
+        conflicting = FunctionSignature.get_conflicting_type_names(sigs)
 
-        type_blocks = self._render_type_definitions(sigs, conflicting)
+        type_blocks = FunctionSignature.render_type_definitions(sigs, conflicting)
         function_blocks = [
             td.render_signature('...', is_async=True, conflicting_type_names=conflicting)
             for td in callable_defs.values()
@@ -403,34 +403,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             sections.append('```python\n' + '\n\n'.join(type_blocks) + '\n```')
         sections.append('```python\n' + '\n\n'.join(function_blocks) + '\n```')
         return '\n\n'.join(sections)
-
-    @staticmethod
-    def _render_type_definitions(
-        sigs: list[FunctionSignature],
-        conflicting: frozenset[str],
-    ) -> list[str]:
-        """Render unique TypedDict definitions for the function prelude.
-
-        For types whose names conflict across tools, each is rendered under
-        the owning tool's name prefix (e.g. `get_user_Address`).
-        """
-        unique_types = FunctionSignature.collect_unique_referenced_types(sigs)
-        if not unique_types:
-            return []
-
-        # Build owner map: for each unique type that needs a prefix, find which
-        # signature (tool) owns it so we can render with the right prefix.
-        owner_for: dict[int, str] = {}
-        for sig in sigs:
-            for tsig in sig.referenced_types:
-                if tsig.name in conflicting and id(tsig) not in owner_for:
-                    owner_for[id(tsig)] = sig.name
-
-        rendered: list[str] = []
-        for tsig in unique_types:
-            owner = owner_for.get(id(tsig))
-            rendered.append(tsig.render_definition(owner_name=owner, conflicting_type_names=conflicting))
-        return rendered
 
 
 class _PrintCapture:

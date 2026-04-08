@@ -163,6 +163,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
         description = self._build_description(callable_defs)
 
+        if _RUN_CODE_TOOL_NAME in native_tools:
+            raise UserError(
+                f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
+            )
+
         # TODO: When CodeMode becomes a core Pydantic AI feature, ensure that
         # the `search_tool` injected by ToolSearchToolset is excluded from
         # code-mode-ification when `tool_selector='all'`.
@@ -174,6 +179,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 description=description,
                 parameters_json_schema=_RUN_CODE_JSON_SCHEMA,
                 metadata={'code_arg_name': 'code', 'code_arg_language': 'python'},
+                sequential=True,
             ),
             max_retries=self.max_retries,
             args_validator=cast(SchemaValidatorProt, _RUN_CODE_ARGS_VALIDATOR),
@@ -238,6 +244,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     # Direct dispatch for tests without an agent (ctx.tool_manager is None).
                     result = await self.wrapped.call_tool(original_name, kwargs, ctx, tool.wrapped_tools[original_name])
             except (CallDeferred, ApprovalRequired) as e:
+                # Approval/deferral require a round-trip back to the caller, which
+                # the sandbox cannot do. We raise UserError here; because this runs
+                # inside Monty's external-function callback, Monty catches it as a
+                # RuntimeError and wraps it in MontyRuntimeError, which our caller
+                # then translates to ModelRetry. The error message is preserved
+                # through the chain so the model (or developer) sees the cause.
                 raise UserError(
                     'Tool approval and deferral are not supported in code mode. '
                     f'Tool {original_name!r} raised {type(e).__name__}; ensure wrapped '
@@ -284,6 +296,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         except MontyTypingError as e:
             raise ModelRetry(f'Type error in code:\n{e.display()}') from e
         except MontyRuntimeError as e:
+            # Note: exceptions raised inside dispatch_tool_call (e.g. UserError
+            # from ApprovalRequired, or ModelRetry from a wrapped tool) get caught
+            # by Monty and re-wrapped as MontyRuntimeError. The original exception
+            # message is preserved in the display string, so the model sees a
+            # useful error. This means ModelRetry from a wrapped tool gets
+            # double-wrapped (ModelRetry → MontyRuntimeError → ModelRetry), but
+            # the retry semantics are the same — the model gets another chance.
             raise ModelRetry(f'Runtime error:\n{e.display()}') from e
 
         # TODO: For stdio-based driver runtimes (e.g. Monty's current driver loop),
@@ -369,7 +388,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         if not callable_defs:
             return _RUN_CODE_BASE_DESCRIPTION
 
-        sigs = [cast(FunctionSignature, td.function_signature) for td in callable_defs.values()]
+        sigs: list[FunctionSignature] = []
+        for td in callable_defs.values():
+            assert td.function_signature is not None, f'function_signature missing for tool {td.name!r}'
+            sigs.append(td.function_signature)
         conflicting = FunctionSignature.dedup_referenced_types(sigs)
 
         type_blocks = self._render_type_definitions(sigs, conflicting)

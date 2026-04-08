@@ -491,6 +491,22 @@ async def test_native_tool_call_passes_through() -> None:
     assert result == 'Hi, Alice!'
 
 
+async def test_native_tool_named_run_code_raises_user_error() -> None:
+    """A native tool named `run_code` raises UserError (reserved name)."""
+    from pydantic_ai.exceptions import UserError
+
+    def run_code() -> str:
+        """A tool that collides with the reserved name."""
+        return 'oops'  # pragma: no cover
+
+    capability = CodeMode[None](tools=lambda ctx, td: td.name != 'run_code')
+    wrapper = capability.get_wrapper_toolset(_build_function_toolset(run_code, add))
+    assert isinstance(wrapper, CodeModeToolset)
+
+    with pytest.raises(UserError, match="'run_code' is reserved"):
+        await wrapper.get_tools(build_run_context(None))
+
+
 async def test_filter_excluding_everything_yields_run_code_with_no_functions() -> None:
     """A filter that rejects every tool produces a `run_code` with no functions block."""
     capability = CodeMode[None](tools=lambda ctx, td: False)

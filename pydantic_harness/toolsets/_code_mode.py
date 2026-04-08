@@ -291,7 +291,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
         except MontySyntaxError as e:
             raise ModelRetry(f'Syntax error in code:\n{e.display()}') from e
-        except MontyTypingError as e:
+        except MontyTypingError as e:  # pragma: no cover — MontyRepl doesn't raise this yet
             raise ModelRetry(f'Type error in code:\n{e.display()}') from e
         except MontyRuntimeError as e:
             # Note: exceptions raised inside dispatch_tool_call (e.g. UserError

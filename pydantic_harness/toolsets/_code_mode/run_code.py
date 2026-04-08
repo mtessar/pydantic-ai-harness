@@ -11,10 +11,7 @@ from typing import Annotated, Any, cast
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.function_signature import (
-    FunctionSignature,
-    _type_name_overrides,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -348,9 +345,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     ) -> list[str]:
         """Render unique TypedDict definitions for the function prelude.
 
-        For types whose names conflict across tools, we render each under
-        the owning tool's name prefix by setting the `_type_name_overrides`
-        ContextVar (the same mechanism `FunctionSignature.render` uses).
+        For types whose names conflict across tools, each is rendered under
+        the owning tool's name prefix (e.g. `get_user_Address`).
         """
         unique_types = FunctionSignature.collect_unique_referenced_types(sigs)
         if not unique_types:
@@ -366,16 +362,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         rendered: list[str] = []
         for tsig in unique_types:
-            if tsig.name in conflicting:
-                owner = owner_for[id(tsig)]
-                overrides = {tsig.name: f'{owner}_{tsig.name}'}
-                token = _type_name_overrides.set(overrides)
-                try:
-                    rendered.append(tsig.render_definition())
-                finally:
-                    _type_name_overrides.reset(token)
-            else:
-                rendered.append(tsig.render_definition())
+            owner = owner_for.get(id(tsig))
+            rendered.append(tsig.render_definition(owner_name=owner, conflicting_type_names=conflicting))
         return rendered
 
 

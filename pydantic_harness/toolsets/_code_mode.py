@@ -226,7 +226,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             """Dispatch a single tool call from inside the sandbox."""
             nonlocal call_counter
             call_counter += 1
-            tool_call_id = f'pai__{call_counter}'
+            tool_call_id = f'pyd_ai_code_mode_{call_counter}'
             call_part = ToolCallPart(tool_name=original_name, args=kwargs, tool_call_id=tool_call_id)
             nested_calls[tool_call_id] = call_part
 

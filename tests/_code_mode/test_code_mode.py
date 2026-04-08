@@ -914,7 +914,7 @@ async def test_approval_required_surfaces_as_model_retry() -> None:
 
     def needs_approval() -> str:
         """A tool that requires approval."""
-        raise _ApprovalRequired('needs human')
+        raise _ApprovalRequired()
 
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(needs_approval))
     assert isinstance(wrapper, CodeModeToolset)

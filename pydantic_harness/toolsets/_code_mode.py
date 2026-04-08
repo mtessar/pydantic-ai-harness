@@ -40,7 +40,7 @@ _RUN_CODE_TOOL_NAME = 'run_code'
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR = _RUN_CODE_ADAPTER.validator
-_TOOL_RETURN_ADAPTER = TypeAdapter(Any)
+_TOOL_RETURN_ADAPTER: TypeAdapter[Any] = TypeAdapter(Any)
 
 _RUN_CODE_BASE_DESCRIPTION = """\
 Write and run Python code in a sandboxed environment.

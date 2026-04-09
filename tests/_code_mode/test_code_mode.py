@@ -536,6 +536,21 @@ async def test_native_tool_named_run_code_raises_user_error() -> None:
         await wrapper.get_tools(build_run_context(None))
 
 
+async def test_sandboxed_tool_named_run_code_raises_user_error() -> None:
+    """A sandboxed tool named `run_code` raises UserError (conflicts with meta-tool)."""
+    from pydantic_ai.exceptions import UserError
+
+    def run_code() -> str:
+        """A tool that collides with the meta-tool name."""
+        return 'oops'  # pragma: no cover
+
+    wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(run_code, add))
+    assert isinstance(wrapper, CodeModeToolset)
+
+    with pytest.raises(UserError, match='conflicts with the code mode'):
+        await wrapper.get_tools(build_run_context(None))
+
+
 async def test_filter_excluding_everything_yields_run_code_with_no_functions() -> None:
     """A filter that rejects every tool produces a `run_code` with no functions block."""
     capability = CodeMode[None](tools=lambda ctx, td: False)

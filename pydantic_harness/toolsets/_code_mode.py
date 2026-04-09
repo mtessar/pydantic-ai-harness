@@ -24,7 +24,7 @@ try:
         MontySyntaxError,
         MontyTypingError,
     )
-except ImportError as _import_error:
+except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'pydantic-monty is required for CodeMode. Install it with: pip install "pydantic-harness[code-mode]"'
     ) from _import_error
@@ -391,6 +391,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 continue
 
             safe_name = _sanitize_tool_name(name)
+            if safe_name == _RUN_CODE_TOOL_NAME:
+                raise UserError(
+                    f"Tool name '{name}' (sanitized to '{safe_name}') conflicts with the code mode "
+                    f'meta-tool. Rename your tool to avoid conflicts.'
+                )
             if safe_name in callable_defs:
                 existing = sanitized_to_original.get(safe_name, safe_name)
                 warnings.warn(

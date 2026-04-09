@@ -288,17 +288,15 @@ async def test_run_code_parallel_tool_calls_one_fails() -> None:
     """When one of several parallel tool calls fails, the error surfaces as ModelRetry."""
 
     def flaky(x: int) -> int:
-        """Fail on odd input."""
-        if x % 2 != 0:
-            raise ModelRetry('odd input not allowed')
-        return x * 10
+        """Always fails."""
+        raise ModelRetry('not allowed')
 
     wrapper = CodeMode[None]().get_wrapper_toolset(_build_function_toolset(add, flaky))
     assert isinstance(wrapper, CodeModeToolset)
     ctx = await build_ctx(None, wrapper)
     tools = await wrapper.get_tools(ctx)
     code = 'import asyncio\nawait asyncio.gather(add(a=1, b=2), flaky(x=3))'
-    with pytest.raises(ModelRetry, match='odd input not allowed'):
+    with pytest.raises(ModelRetry, match='not allowed'):
         await wrapper.call_tool('run_code', {'code': code}, ctx, tools['run_code'])
 
 

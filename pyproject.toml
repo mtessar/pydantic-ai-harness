@@ -26,7 +26,7 @@ classifiers = [
 ]
 dependencies = [
     'pydantic-ai-slim>=1.78.0',
-    "pydantic-monty>=0.0.9",
+    "pydantic-monty>=0.0.10",
 ]
 
 [project.urls]
@@ -55,9 +55,6 @@ vcs = 'git'
 style = 'pep440'
 bump = true
 
-[tool.uv.sources]
-# Use Monty `main` for `MontyRepl.feed_run_async` (not yet in a PyPI release).
-pydantic-monty = { git = 'https://github.com/pydantic/monty.git', branch = 'main', subdirectory = 'crates/monty-python' }
 
 [tool.hatch.build.targets.wheel]
 packages = ['pydantic_harness']

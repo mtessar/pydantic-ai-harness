@@ -41,10 +41,9 @@ _RUN_CODE_TOOL_NAME = 'run_code'
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
 _RUN_CODE_ARGS_VALIDATOR = _RUN_CODE_ADAPTER.validator
-_TOOL_RETURN_ADAPTER: TypeAdapter[Any] = TypeAdapter(Any)
-# Validates Monty results back to proper types (e.g. reconstructs BinaryContent from serialized dicts)
-# so that multimodal content flows through to the model natively.
-_TOOL_RETURN_CONTENT_VALIDATOR: TypeAdapter[Any] = TypeAdapter(ToolReturnContent)
+# Used to serialize tool return values before sending into Monty (dump_python)
+# and to reconstruct multimodal types (e.g. BinaryContent) from Monty results (validate_python).
+_TOOL_RETURN_CONTENT_TA: TypeAdapter[Any] = TypeAdapter(ToolReturnContent)
 
 _RUN_CODE_BASE_DESCRIPTION = """\
 Write and run Python code in a sandboxed environment.
@@ -274,7 +273,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             )
 
             # Serialize to JSON-compatible form so Monty receives only plain data.
-            return _TOOL_RETURN_ADAPTER.dump_python(result)
+            return _TOOL_RETURN_CONTENT_TA.dump_python(result)
 
         # For sanitized names (e.g. `get_weather` from `get-weather`), Monty sees the
         # safe name but we dispatch using the original name from the wrapped toolset.
@@ -316,7 +315,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Validate result to reconstruct multimodal types (e.g. BinaryContent from
         # serialized dicts) so they flow through to the model natively.
         if result is not None:
-            result = _TOOL_RETURN_CONTENT_VALIDATOR.validate_python(result)
+            result = _TOOL_RETURN_CONTENT_TA.validate_python(result)
 
         # Build return value:
         # - No print → return result directly (multimodal content stays top-level

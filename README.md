@@ -57,9 +57,16 @@ result = agent.run_sync('Remember that my favourite colour is blue.')
 
 ## Code Mode
 
-The `CodeMode` capability replaces direct tool calls with a single `run_code` tool. Instead of calling tools one at a time, the model writes Python code that calls them as async functions inside a sandboxed [Monty](https://github.com/pydantic/monty) runtime. This lets the model chain multiple tool calls, use control flow (loops, conditionals), and post-process results -- all in a single round-trip.
+The `CodeMode` capability replaces individual tool calls with a single `run_code` tool. Instead of calling tools one at a time -- each requiring a separate round-trip to the model -- the model writes Python code that orchestrates multiple tools at once with loops, conditionals, variables, and parallel execution, all inside a sandboxed [Monty](https://github.com/pydantic/monty) runtime.
 
-See also: [Tool use is also code generation](https://www.anthropic.com/engineering/tool-use-is-also-code-generation) (Anthropic) and [How we built our AI agent's tool use pipeline](https://blog.cloudflare.com/how-we-built-our-ai-agents-tool-use-pipeline/) (Cloudflare).
+**Key advantages:**
+
+- **Fewer model round-trips**: fetching 10 items and looking up details for each = 11 model calls with standard tool calling, but just 1 with code mode.
+- **Parallelism**: independent tool calls run concurrently via async/await, without waiting for each to complete before starting the next.
+- **Smaller context**: fewer round-trips means less conversation history, saving tokens and keeping the model focused.
+- **Local processing**: the model can filter, transform, and aggregate results in code without additional model calls.
+
+Further reading: [Tool use via code](https://www.anthropic.com/engineering/code-execution-with-mcp) (Anthropic), [Code mode in production](https://blog.cloudflare.com/code-mode/) (Cloudflare).
 
 ### Basic usage
 
@@ -67,27 +74,34 @@ See also: [Tool use is also code generation](https://www.anthropic.com/engineeri
 from pydantic_ai import Agent
 from pydantic_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-20250514', capabilities=[CodeMode()])
+agent = Agent('anthropic:claude-sonnet-4-6-latest', capabilities=[CodeMode()])
 
 @agent.tool_plain
-def add(a: int, b: int) -> int:
-    """Add two numbers."""
-    return a + b
+def get_weather(city: str) -> dict:
+    """Get current weather for a city."""
+    return {'city': city, 'temp_f': 72, 'condition': 'sunny'}
 
 @agent.tool_plain
-def greet(name: str) -> str:
-    """Greet someone."""
-    return f'Hello, {name}!'
+def convert_temp(fahrenheit: float) -> float:
+    """Convert Fahrenheit to Celsius."""
+    return round((fahrenheit - 32) * 5 / 9, 1)
 
-result = agent.run_sync('Add 2 and 3, then greet the result')
+result = agent.run_sync("What's the weather in Paris and Tokyo, in Celsius?")
 ```
 
 The model sees a single `run_code` tool whose description includes the signatures of all available tools as async Python functions. It writes code like:
 
 ```python
-total = await add(a=2, b=3)
-msg = await greet(name=str(total))
-msg  # last expression is returned automatically
+# Fire both lookups concurrently
+future_paris = get_weather(city="Paris")
+future_tokyo = get_weather(city="Tokyo")
+paris = await future_paris
+tokyo = await future_tokyo
+
+# Convert locally
+paris_c = await convert_temp(fahrenheit=paris["temp_f"])
+tokyo_c = await convert_temp(fahrenheit=tokyo["temp_f"])
+{"paris": paris_c, "tokyo": tokyo_c}  # last expression returned automatically
 ```
 
 ### Selective tool sandboxing
@@ -101,23 +115,23 @@ CodeMode(tools=['search', 'fetch'])
 # By predicate
 CodeMode(tools=lambda ctx, td: td.name != 'dangerous_tool')
 
-# By metadata -- use with SetToolMetadata capability or .with_metadata() on toolsets
+# By metadata -- use with SetToolMetadata or .with_metadata() on toolsets
 CodeMode(tools={'code_mode': True})
 ```
 
-When using the metadata dict selector, mark tools for sandboxing with the `SetToolMetadata` capability or the `.with_metadata()` method on toolset instances:
+When using the metadata dict selector, mark tools for sandboxing with `SetToolMetadata` or `.with_metadata()`:
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_harness import CodeMode
 
+search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
+
 agent = Agent(
-    'anthropic:claude-sonnet-4-20250514',
-    capabilities=[
-        SetToolMetadata(tools=['search', 'fetch'], metadata={'code_mode': True}),
-        CodeMode(tools={'code_mode': True}),
-    ],
+    'anthropic:claude-sonnet-4-6-latest',
+    toolsets=[search_tools],
+    capabilities=[CodeMode(tools={'code_mode': True})],
 )
 ```
 

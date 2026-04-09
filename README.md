@@ -74,7 +74,7 @@ Further reading: [Tool use via code](https://www.anthropic.com/engineering/code-
 from pydantic_ai import Agent
 from pydantic_harness import CodeMode
 
-agent = Agent('anthropic:claude-sonnet-4-6-latest', capabilities=[CodeMode()])
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode()])
 
 @agent.tool_plain
 def get_weather(city: str) -> dict:
@@ -129,7 +129,7 @@ from pydantic_harness import CodeMode
 search_tools = FunctionToolset(tools=[search, fetch]).with_metadata(code_mode=True)
 
 agent = Agent(
-    'anthropic:claude-sonnet-4-6-latest',
+    'anthropic:claude-sonnet-4-6',
     toolsets=[search_tools],
     capabilities=[CodeMode(tools={'code_mode': True})],
 )

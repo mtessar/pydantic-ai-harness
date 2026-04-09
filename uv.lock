@@ -836,6 +836,10 @@ name = "pydantic-harness"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic-ai-slim" },
+]
+
+[package.optional-dependencies]
+code-mode = [
     { name = "pydantic-monty" },
 ]
 
@@ -844,6 +848,7 @@ dev = [
     { name = "anyio", extra = ["trio"] },
     { name = "coverage" },
     { name = "logfire", extra = ["httpx"] },
+    { name = "pydantic-harness", extra = ["code-mode"] },
     { name = "pytest" },
     { name = "pytest-anyio" },
 ]
@@ -855,14 +860,16 @@ lint = [
 [package.metadata]
 requires-dist = [
     { name = "pydantic-ai-slim", specifier = ">=1.78.0" },
-    { name = "pydantic-monty", specifier = ">=0.0.10" },
+    { name = "pydantic-monty", marker = "extra == 'code-mode'", specifier = ">=0.0.10" },
 ]
+provides-extras = ["code-mode"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "anyio", extras = ["trio"] },
     { name = "coverage" },
     { name = "logfire", extras = ["httpx"], specifier = ">=4.31.0" },
+    { name = "pydantic-harness", extras = ["code-mode"] },
     { name = "pytest" },
     { name = "pytest-anyio" },
 ]

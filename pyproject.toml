@@ -26,7 +26,11 @@ classifiers = [
 ]
 dependencies = [
     'pydantic-ai-slim>=1.78.0',
-    "pydantic-monty>=0.0.10",
+]
+
+[project.optional-dependencies]
+code-mode = [
+    'pydantic-monty>=0.0.10',
 ]
 
 [project.urls]
@@ -36,6 +40,7 @@ Issues = 'https://github.com/pydantic/pydantic-harness/issues'
 
 [dependency-groups]
 dev = [
+    'pydantic-harness[code-mode]',
     'pytest',
     'anyio[trio]',
     'pytest-anyio',

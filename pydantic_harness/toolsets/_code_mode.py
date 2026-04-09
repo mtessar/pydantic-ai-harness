@@ -16,12 +16,18 @@ from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, ToolReturnPart, is_multi_modal_content
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
-from pydantic_monty import (
-    MontyRepl,
-    MontyRuntimeError,
-    MontySyntaxError,
-    MontyTypingError,
-)
+
+try:
+    from pydantic_monty import (
+        MontyRepl,
+        MontyRuntimeError,
+        MontySyntaxError,
+        MontyTypingError,
+    )
+except ImportError as _import_error:
+    raise ImportError(
+        'pydantic-monty is required for CodeMode. Install it with: pip install "pydantic-harness[code-mode]"'
+    ) from _import_error
 from typing_extensions import NotRequired, TypedDict
 
 

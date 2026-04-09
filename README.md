@@ -14,6 +14,12 @@ Each capability is an [`AbstractCapability`](https://ai.pydantic.dev/capabilitie
 pip install pydantic-harness
 ```
 
+Extras for specific capabilities:
+
+```bash
+pip install "pydantic-harness[code-mode]"  # CodeMode capability (adds pydantic-monty)
+```
+
 Requires Python 3.10+ and `pydantic-ai-slim>=1.78.0`.
 
 ## Quick start

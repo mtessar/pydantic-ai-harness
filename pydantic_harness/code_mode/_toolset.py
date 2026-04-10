@@ -7,7 +7,7 @@ import re
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
@@ -46,7 +46,7 @@ class _RunCodeArguments(TypedDict):
 _RUN_CODE_TOOL_NAME = 'run_code'
 _RUN_CODE_ADAPTER = TypeAdapter(_RunCodeArguments)
 _RUN_CODE_JSON_SCHEMA = _RUN_CODE_ADAPTER.json_schema()
-_RUN_CODE_ARGS_VALIDATOR = _RUN_CODE_ADAPTER.validator
+_RUN_CODE_ARGS_VALIDATOR: SchemaValidatorProt = _RUN_CODE_ADAPTER.validator  # pyright: ignore[reportAssignmentType]
 # Used to serialize tool return values before sending into Monty (dump_python)
 # and to reconstruct multimodal types (e.g. BinaryContent) from Monty results (validate_python).
 _TOOL_RETURN_CONTENT_TA: TypeAdapter[Any] = TypeAdapter(ToolReturnContent)
@@ -195,7 +195,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 sequential=True,
             ),
             max_retries=self.max_retries,
-            args_validator=cast(SchemaValidatorProt, _RUN_CODE_ARGS_VALIDATOR),
+            args_validator=_RUN_CODE_ARGS_VALIDATOR,
             callable_defs=callable_defs,
             sanitized_to_original=sanitized_to_original,
             wrapped_tools=wrapped_tools,

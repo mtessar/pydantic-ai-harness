@@ -29,7 +29,7 @@ Extras for specific capabilities:
 uv add "pydantic-harness[code-mode]"   # CodeMode (adds the Monty sandbox)
 ```
 
-Requires Python 3.10+ and `pydantic-ai-slim>=1.78.0`.
+Requires Python 3.10+ and `pydantic-ai-slim>=1.80.0`.
 
 ## Quick start
 
@@ -72,7 +72,7 @@ We studied leading coding agents, agent frameworks, and Claw-style assistants to
 | | **Limit warnings** | Warn agent before hitting context/iteration limits | :construction: [PR&nbsp;#191](https://github.com/pydantic/pydantic-harness/pull/191) | [summarization-pydantic-ai](https://github.com/vstorm-co/summarization-pydantic-ai) (vstorm&#8209;co) |
 | | **Tool output management** | Truncate, summarize, or spill large tool outputs | :construction: [PR&nbsp;#185](https://github.com/pydantic/pydantic-harness/pull/185) | |
 | | **System reminders** | Inject periodic reminders to counteract instruction drift | :construction: [PR&nbsp;#181](https://github.com/pydantic/pydantic-harness/pull/181) | |
-| **Memory &&nbsp;persistence** | **Memory** | Persistent key-value memory across sessions | :construction: [PR&nbsp;#179](https://github.com/pydantic/pydantic-harness/pull/179) | [memv](https://github.com/vstorm-co/memv) (vstorm&#8209;co) |
+| **Memory &&nbsp;persistence** | **Memory** | Persistent key-value memory across sessions | :construction: [PR&nbsp;#179](https://github.com/pydantic/pydantic-harness/pull/179) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | | **Session persistence** | Save and restore full conversation state | :construction: [PR&nbsp;#176](https://github.com/pydantic/pydantic-harness/pull/176) | |
 | | **Checkpointing** | Save, rewind, and fork conversation state | :memo: [#196](https://github.com/pydantic/pydantic-harness/issues/196) | [pydantic-deep](https://github.com/vstorm-co/pydantic-deepagents) (vstorm&#8209;co) |
 | **Agent orchestration** | **Sub-agents** | Delegate subtasks to specialized child agents | :construction: [PR&nbsp;#178](https://github.com/pydantic/pydantic-harness/pull/178) | [subagents-pydantic-ai](https://github.com/vstorm-co/subagents-pydantic-ai) (vstorm&#8209;co) |

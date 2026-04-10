@@ -27,6 +27,7 @@ except ImportError:  # pragma: no cover
 try:
     from pydantic_monty import (
         ExternalException,
+        ExternalResult,
         ExternalReturnValue,
         FunctionSnapshot,
         FutureSnapshot,
@@ -610,7 +611,7 @@ async def _execution_loop(
     pending: dict[int, asyncio.Task[Any] | Coroutine[Any, Any, Any]] = {}
     # Results from parallel tasks that were awaited early (at a sequential-tool
     # barrier) but whose FutureSnapshot hasn't been reached yet.
-    pre_resolved: dict[int, ExternalReturnValue | ExternalException] = {}
+    pre_resolved: dict[int, ExternalResult] = {}
     try:
         while not isinstance(monty_state, MontyComplete):
             if isinstance(monty_state, NameLookupSnapshot):
@@ -652,7 +653,7 @@ async def _handle_function_snapshot(
     sequential_tools: set[str],
     global_sequential: bool,
     pending: dict[int, asyncio.Task[Any] | Coroutine[Any, Any, Any]],
-    pre_resolved: dict[int, ExternalReturnValue | ExternalException],
+    pre_resolved: dict[int, ExternalResult],
 ) -> FunctionSnapshot | FutureSnapshot | NameLookupSnapshot | MontyComplete:
     """Handle a single FunctionSnapshot from the Monty execution loop."""
     fn_name = snapshot.function_name
@@ -692,7 +693,7 @@ async def _resolve_future_snapshot(
     snapshot: FutureSnapshot,
     *,
     pending: dict[int, asyncio.Task[Any] | Coroutine[Any, Any, Any]],
-    pre_resolved: dict[int, ExternalReturnValue | ExternalException],
+    pre_resolved: dict[int, ExternalResult],
     global_sequential: bool,
 ) -> FunctionSnapshot | FutureSnapshot | NameLookupSnapshot | MontyComplete:
     """Resolve pending tool calls at a FutureSnapshot."""
@@ -700,7 +701,7 @@ async def _resolve_future_snapshot(
     if not pending_ids:  # pragma: no cover
         return snapshot.resume(results={})
 
-    results: dict[int, ExternalReturnValue | ExternalException] = {}
+    results: dict[int, ExternalResult] = {}
     for cid in pending_ids:
         if cid in pre_resolved:
             results[cid] = pre_resolved.pop(cid)
@@ -717,10 +718,12 @@ async def _resolve_future_snapshot(
         for cid, outcome in zip(gather_ids, settled):
             results[cid] = _settle_outcome(outcome)
 
-    return snapshot.resume(results=results)  # pyright: ignore[reportArgumentType]
+    return snapshot.resume(results=results)
 
 
-async def _resolve_coro(coro: Coroutine[Any, Any, Any] | asyncio.Task[Any]) -> ExternalReturnValue | ExternalException:
+async def _resolve_coro(
+    coro: Coroutine[Any, Any, Any] | asyncio.Task[Any],
+) -> ExternalReturnValue | ExternalException:
     """Await a single coroutine/task and wrap the result for Monty."""
     try:
         result = await coro

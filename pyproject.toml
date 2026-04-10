@@ -36,7 +36,7 @@ temporal = [
     'pydantic-ai-slim[temporal]',
 ]
 dbos = [
-    'pydantic-ai-slim[dbos,mcp]',
+    'pydantic-ai-slim[dbos]',
 ]
 
 [project.urls]

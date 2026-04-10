@@ -378,9 +378,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             monty_state = self._repl.feed_start(code, print_callback=capture)
             completed = await _execution_loop(
                 monty_state,
-                dispatch_tool_call,
-                callable_defs,
-                sanitized_to_original,
+                dispatch=dispatch_tool_call,
+                callable_defs=callable_defs,
+                sanitized_to_original=sanitized_to_original,
                 sequential_tools=sequential_tools,
                 global_sequential=global_sequential,
             )
@@ -581,10 +581,10 @@ def _get_sigs_and_conflicting(
 
 async def _execution_loop(
     monty_state: FunctionSnapshot | FutureSnapshot | NameLookupSnapshot | MontyComplete,
+    *,
     dispatch: _DispatchFn,
     callable_defs: dict[str, ToolDefinition],
     sanitized_to_original: dict[str, str],
-    *,
     sequential_tools: set[str],
     global_sequential: bool,
 ) -> MontyComplete:

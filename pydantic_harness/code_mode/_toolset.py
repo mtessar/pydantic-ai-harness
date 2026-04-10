@@ -15,6 +15,7 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, ToolReturnPart, is_multi_modal_content
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
+from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 
 try:
@@ -77,6 +78,16 @@ The following functions are available inside the sandbox. Call them directly \
 All tool functions are async: invoke them with `await`, e.g. `result = await tool_name(arg=value)`. \
 Calling without `await` returns an unresolved future, not the value.\
 """
+
+_SEARCH_TOOLS_MODIFIER = (
+    ' Note: discovered tools become callable as functions inside the run_code sandbox in subsequent invocations.'
+)
+
+_TOOL_SEARCH_ADDENDUM = (
+    f'\n\nNot all functions may be available initially.'
+    f' Use the `{_SEARCH_TOOLS_NAME}` tool to discover additional functions'
+    f' that will become callable in subsequent `run_code` invocations.'
+)
 
 _INVALID_IDENT_CHARS = re.compile(r'[^a-zA-Z0-9_]')
 
@@ -165,10 +176,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         wrapped_tools = await self.wrapped.get_tools(ctx)
 
         # Split tools into sandboxed vs native based on the selector.
+        # The search_tools tool (from ToolSearchToolset) is always kept native
+        # so the model can discover deferred tools alongside run_code.
         sandboxed_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         native_tools: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in wrapped_tools.items():
-            if await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
+            if name == _SEARCH_TOOLS_NAME:
+                native_tools[name] = tool
+            elif await matches_tool_selector(self.tool_selector, ctx, tool.tool_def):
                 sandboxed_tools[name] = tool
             else:
                 native_tools[name] = tool
@@ -181,9 +196,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 f"Tool name '{_RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
             )
 
-        # TODO: When CodeMode becomes a core Pydantic AI feature, ensure that
-        # the `search_tool` injected by ToolSearchToolset is excluded from
-        # code-mode-ification when `tool_selector='all'`.
+        # When search_tools is present, append context about run_code to its
+        # description and add a discovery note to the run_code description.
+        has_search_tools = _SEARCH_TOOLS_NAME in native_tools
+        if has_search_tools:
+            search_tool = native_tools[_SEARCH_TOOLS_NAME]
+            native_tools[_SEARCH_TOOLS_NAME] = replace(
+                search_tool,
+                tool_def=replace(
+                    search_tool.tool_def,
+                    description=(search_tool.tool_def.description or '') + _SEARCH_TOOLS_MODIFIER,
+                ),
+            )
+            description += _TOOL_SEARCH_ADDENDUM
+
         result: dict[str, ToolsetTool[AgentDepsT]] = dict(native_tools)
         result[_RUN_CODE_TOOL_NAME] = _RunCodeTool(
             toolset=self,

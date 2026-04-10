@@ -29,6 +29,8 @@ from typing_extensions import TypedDict
 from pydantic_harness import CodeMode
 from pydantic_harness.code_mode import CodeModeToolset
 from pydantic_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
+    _SEARCH_TOOLS_MODIFIER,
+    _TOOL_SEARCH_ADDENDUM,
     _PrintCapture,
     _sanitize_tool_name,
 )
@@ -1231,3 +1233,84 @@ class TestCodeMode:
         capture('stdout', ' ')
         capture('stdout', 'world\n')
         assert capture.joined == 'hello world\n'
+
+
+class TestToolSearchIntegration:
+    """Tests for CodeMode + ToolSearch (search_tools) interaction."""
+
+    async def test_search_tool_stays_native(self) -> None:
+        """search_tools is kept as a native tool even with tools='all'."""
+        from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
+        from pydantic_ai.toolsets.combined import CombinedToolset
+
+        search_toolset = _StaticToolset([_search_tool_def()])
+        func_toolset = _build_function_toolset(add)
+        combined = CombinedToolset([search_toolset, func_toolset])
+        code_mode = CodeModeToolset(wrapped=combined, tool_selector='all')
+        ctx = build_run_context(None)
+        tools = await code_mode.get_tools(ctx)
+
+        # search_tools should be native (not sandboxed inside run_code)
+        assert _SEARCH_TOOLS_NAME in tools
+        assert tools[_SEARCH_TOOLS_NAME].tool_def.name == _SEARCH_TOOLS_NAME
+        # run_code should also be present with the sandboxed 'add' function
+        assert 'run_code' in tools
+        # add should be sandboxed (not a separate native tool)
+        assert 'add' not in tools
+
+    async def test_search_tools_description_appended(self) -> None:
+        """search_tools description gets a modifier appended about run_code functions."""
+        from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
+
+        original_desc = 'There are additional tools. Search here.'
+        toolset = _StaticToolset([_search_tool_def(description=original_desc)])
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        ctx = build_run_context(None)
+        tools = await code_mode.get_tools(ctx)
+
+        modified_desc = tools[_SEARCH_TOOLS_NAME].tool_def.description
+        assert modified_desc is not None
+        assert modified_desc.startswith(original_desc)
+        assert modified_desc.endswith(_SEARCH_TOOLS_MODIFIER)
+
+    async def test_run_code_description_includes_search_note(self) -> None:
+        """run_code description includes tool search addendum when search_tools present."""
+        toolset = _StaticToolset([_search_tool_def()])
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        ctx = build_run_context(None)
+        tools = await code_mode.get_tools(ctx)
+
+        run_code_desc = tools['run_code'].tool_def.description
+        assert run_code_desc is not None
+        assert _TOOL_SEARCH_ADDENDUM.strip() in run_code_desc
+
+    async def test_run_code_description_no_search_note_without_search_tools(self) -> None:
+        """run_code description does NOT include search addendum when no search_tools."""
+        toolset = _build_function_toolset(add)
+        code_mode = CodeModeToolset(wrapped=toolset, tool_selector='all')
+        ctx = build_run_context(None)
+        tools = await code_mode.get_tools(ctx)
+
+        run_code_desc = tools['run_code'].tool_def.description
+        assert run_code_desc is not None
+        assert 'search_tools' not in run_code_desc
+
+    def test_code_mode_ordering(self) -> None:
+        """CodeMode declares ordering: outermost position, wraps ToolSearch."""
+        from pydantic_ai.capabilities._tool_search import ToolSearch
+
+        ordering = CodeMode.get_ordering()
+        assert ordering is not None
+        assert ordering.position == 'outermost'
+        assert ToolSearch in ordering.wraps
+
+
+def _search_tool_def(description: str = 'Search for tools.') -> ToolDefinition:
+    """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset."""
+    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME
+
+    return ToolDefinition(
+        name=_SEARCH_TOOLS_NAME,
+        description=description,
+        parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
+    )

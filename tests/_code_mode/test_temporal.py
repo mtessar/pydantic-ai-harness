@@ -187,6 +187,7 @@ async def test_code_mode_runs_in_temporal_workflow(client: Client) -> None:
     # Verify nested tool call/return metadata
     metadata = tr['metadata']
     assert metadata is not None
+    assert metadata['code_mode'] is True
     nested_calls = metadata['tool_calls']
     nested_returns = metadata['tool_returns']
     assert len(nested_calls) == 1

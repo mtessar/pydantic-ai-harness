@@ -240,7 +240,7 @@ class TestCodeMode:
         assert result.return_value == {'output': '5\n'}
 
         # Nested tool calls are recorded as ToolCallPart/ToolReturnPart pairs in metadata.
-        # Nested tool calls/returns are recorded as dicts keyed by tool_call_id.
+        assert result.metadata['code_mode'] is True
         calls = result.metadata['tool_calls']
         returns = result.metadata['tool_returns']
         assert list(calls.keys()) == ['pyd_ai_code_mode__1']
@@ -1361,6 +1361,18 @@ class TestCodeMode:
         )
         assert result.return_value == [3, 'Hello, World!']
 
+        # Metadata records both sequential and parallel tool calls.
+        assert result.metadata['code_mode'] is True
+        calls = result.metadata['tool_calls']
+        returns = result.metadata['tool_returns']
+        assert len(calls) == 2
+        assert len(returns) == 2
+        call_names = {c.tool_name for c in calls.values()}
+        assert call_names == {'add', 'greet'}
+        for tc_id, call in calls.items():
+            assert tc_id in returns
+            assert returns[tc_id].tool_name == call.tool_name
+
     async def test_sequential_tool_barrier_awaits_pending_parallel_tasks(self) -> None:
         """When a sequential tool is called while parallel tasks are pending,
         the pending tasks are awaited first (barrier) before dispatching."""
@@ -1406,6 +1418,19 @@ class TestCodeMode:
             tools['run_code'],
         )
         assert result.return_value == [3, 'Hello, World!']
+
+        # Both calls recorded in metadata — greet resolved at barrier, add resolved inline.
+        assert result.metadata['code_mode'] is True
+        calls = result.metadata['tool_calls']
+        returns = result.metadata['tool_returns']
+        assert len(calls) == 2
+        assert len(returns) == 2
+        # greet was dispatched first (parallel), add second (sequential barrier).
+        call_list = list(calls.values())
+        assert call_list[0].tool_name == 'greet'
+        assert call_list[1].tool_name == 'add'
+        for tc_id in calls:
+            assert returns[tc_id].content in (3, 'Hello, World!')
 
     async def test_sequential_tool_error_surfaces_as_model_retry(self) -> None:
         """An error from a sequential tool (resolved inline) surfaces as ModelRetry."""

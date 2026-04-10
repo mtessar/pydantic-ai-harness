@@ -127,6 +127,7 @@ def test_code_mode_runs_in_dbos_workflow(dbos_instance: DBOS) -> None:
 
     # Verify nested tool call/return metadata
     assert tr.metadata is not None
+    assert tr.metadata['code_mode'] is True
     nested_calls: dict[str, ToolCallPart] = tr.metadata['tool_calls']
     nested_returns: dict[str, ToolReturnPart] = tr.metadata['tool_returns']
     assert len(nested_calls) == 1

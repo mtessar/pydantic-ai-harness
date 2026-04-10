@@ -425,7 +425,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         return ToolReturn(
             return_value=return_value,
-            metadata={'tool_calls': nested_calls, 'tool_returns': nested_returns},
+            metadata={'code_mode': True, 'tool_calls': nested_calls, 'tool_returns': nested_returns},
         )
 
     def _partition_callable_tools(

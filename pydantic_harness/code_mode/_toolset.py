@@ -127,7 +127,7 @@ def _sanitize_tool_name(name: str) -> str:
     """Turn a tool name into a valid Python identifier.
 
     Replaces hyphens, dots, and other non-identifier characters with underscores,
-    prepends `_` if the result starts with a digit or is a Python keyword.
+    prepends `_` if the result starts with a digit, appends `_` if it is a Python keyword.
     """
     sanitized = _INVALID_IDENT_CHARS.sub('_', name)
     if sanitized and sanitized[0].isdigit():

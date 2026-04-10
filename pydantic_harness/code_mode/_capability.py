@@ -8,7 +8,7 @@ from pydantic_ai import AbstractToolset
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.tools import AgentDepsT, ToolSelector
 
-from pydantic_harness.toolsets import CodeModeToolset
+from pydantic_harness.code_mode._toolset import CodeModeToolset
 
 
 @dataclass

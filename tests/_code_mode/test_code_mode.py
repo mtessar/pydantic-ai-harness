@@ -27,8 +27,8 @@ from pydantic_core import SchemaValidator, core_schema
 from typing_extensions import TypedDict
 
 from pydantic_harness import CodeMode
-from pydantic_harness.toolsets import CodeModeToolset
-from pydantic_harness.toolsets._code_mode import (  # pyright: ignore[reportPrivateUsage]
+from pydantic_harness.code_mode import CodeModeToolset
+from pydantic_harness.code_mode._toolset import (  # pyright: ignore[reportPrivateUsage]
     _PrintCapture,
     _sanitize_tool_name,
 )

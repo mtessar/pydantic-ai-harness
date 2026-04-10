@@ -239,11 +239,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         code = tool_args['code']
         restart = tool_args.get('restart', False)
 
+        # Determine freshness *before* creating the REPL so that if type
+        # checking fails (raises ModelRetry), the REPL stays None and the
+        # next retry still gets type-checked.
         fresh_repl = self._repl is None or restart
-        if fresh_repl:
-            self._repl = MontyRepl()
-        assert self._repl is not None
-        repl = self._repl
 
         callable_defs = tool.callable_defs
         sanitized_to_original = tool.sanitized_to_original
@@ -326,13 +325,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         # Static type checking on fresh REPL sessions (first call or after
         # restart). Skipped on subsequent calls because accumulated REPL state
         # (variables from prior snippets) is invisible to the stateless checker.
+        # Runs before REPL creation so that if this raises ModelRetry, the REPL
+        # stays None and the next retry still gets type-checked.
         if fresh_repl and callable_defs:
             self._type_check(code, callable_defs)
+
+        # Create the REPL after type checking passes.
+        if fresh_repl:
+            self._repl = MontyRepl()
+        assert self._repl is not None
 
         capture = _PrintCapture()
 
         try:
-            monty_state = repl.feed_start(code, print_callback=capture)
+            monty_state = self._repl.feed_start(code, print_callback=capture)
             completed = await _execution_loop(
                 monty_state, dispatch_tool_call, callable_defs, sanitized_to_original, sequential
             )
@@ -550,7 +556,11 @@ async def _execution_loop(
     graph, where any sequential tool or a durable-execution engine like
     DBOS forces all tool calls to be serialised.
     """
-    tasks: dict[int, asyncio.Task[Any]] = {}
+    # In parallel mode, calls are eagerly scheduled as Tasks so they run
+    # concurrently. In sequential mode, we store bare coroutines and only
+    # await them one-at-a-time at FutureSnapshot resolution to prevent the
+    # event loop from interleaving execution.
+    pending: dict[int, asyncio.Task[Any] | Coroutine[Any, Any, Any]] = {}
     try:
         while not isinstance(monty_state, MontyComplete):
             if isinstance(monty_state, NameLookupSnapshot):
@@ -570,8 +580,13 @@ async def _execution_loop(
                         )
                         continue
                     original_name = sanitized_to_original.get(fn_name, fn_name)
-                    # Always defer — Monty sees all tools as async.
-                    tasks[monty_state.call_id] = asyncio.ensure_future(dispatch(original_name, monty_state.kwargs))
+                    coro = dispatch(original_name, monty_state.kwargs)
+                    if sequential:
+                        # Store the bare coroutine — don't schedule it yet.
+                        pending[monty_state.call_id] = coro
+                    else:
+                        # Eagerly schedule as a Task for concurrent execution.
+                        pending[monty_state.call_id] = asyncio.ensure_future(coro)
                     monty_state = monty_state.resume(future=...)
                 else:
                     # Unknown function — resume with NameError so the sandbox
@@ -586,17 +601,17 @@ async def _execution_loop(
 
                 results: dict[int, ExternalReturnValue | ExternalException] = {}
                 if sequential:
-                    # Sequential mode: resolve tasks one at a time to respect
-                    # ordering guarantees required by sequential tools or
+                    # Sequential mode: await coroutines one at a time to prevent
+                    # the event loop from interleaving execution. Required by
                     # durable execution engines (e.g. DBOS).
                     for cid in pending_ids:
-                        results[cid] = await _resolve_task(tasks.pop(cid))
+                        results[cid] = await _resolve_coro(pending.pop(cid))
                 else:
                     # Parallel mode (default): gather all pending tasks.
-                    pending_tasks = [tasks[cid] for cid in pending_ids]
+                    pending_tasks = [pending[cid] for cid in pending_ids]
                     settled = await asyncio.gather(*pending_tasks, return_exceptions=True)
                     for cid in pending_ids:
-                        del tasks[cid]
+                        del pending[cid]
                     for cid, outcome in zip(pending_ids, settled):
                         results[cid] = _settle_outcome(outcome)
 
@@ -604,16 +619,17 @@ async def _execution_loop(
     finally:
         # Cancel any orphaned tasks (e.g. if an exception interrupted the loop
         # between deferring a FunctionSnapshot and resolving its FutureSnapshot).
-        for t in tasks.values():  # pragma: no cover
-            t.cancel()
+        for item in pending.values():  # pragma: no cover
+            if isinstance(item, asyncio.Task):
+                item.cancel()
 
     return monty_state
 
 
-async def _resolve_task(task: asyncio.Task[Any]) -> ExternalReturnValue | ExternalException:
-    """Await a single task and wrap the result for Monty."""
+async def _resolve_coro(coro: Coroutine[Any, Any, Any] | asyncio.Task[Any]) -> ExternalReturnValue | ExternalException:
+    """Await a single coroutine/task and wrap the result for Monty."""
     try:
-        result = await task
+        result = await coro
     except Exception as exc:
         return ExternalException(exception=exc)
     else:

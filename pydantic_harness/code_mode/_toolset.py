@@ -15,8 +15,12 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ModelRetry, U
 from pydantic_ai.function_signature import FunctionSignature
 from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, ToolReturnPart, is_multi_modal_content
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
-from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
+
+try:
+    from pydantic_ai.toolsets._tool_search import _SEARCH_TOOLS_NAME  # pyright: ignore[reportPrivateUsage]
+except ImportError:  # pragma: no cover
+    _SEARCH_TOOLS_NAME = 'search_tools'  # pyright: ignore[reportConstantRedefinition]
 
 try:
     from pydantic_monty import (
@@ -188,7 +192,14 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             else:
                 native_tools[name] = tool
 
-        callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
+        callable_defs, sanitized_to_original, native_fallbacks = self._partition_callable_tools(sandboxed_tools)
+
+        # Tools that matched the selector but can't run in the sandbox (deferred
+        # execution, deferred loading) are promoted back to native tool calls so
+        # they remain visible to the model.
+        for name in native_fallbacks:
+            native_tools[name] = sandboxed_tools[name]
+
         description = self._build_description(callable_defs)
 
         if _RUN_CODE_TOOL_NAME in native_tools:
@@ -371,26 +382,26 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     def _partition_callable_tools(
         self, wrapped_tools: dict[str, ToolsetTool[AgentDepsT]]
-    ) -> tuple[dict[str, ToolDefinition], dict[str, str]]:
+    ) -> tuple[dict[str, ToolDefinition], dict[str, str], set[str]]:
         """Return tool definitions that can be called from inside the sandbox.
 
         Tool names that are not valid Python identifiers (e.g. MCP tools with
         hyphens or dots like `get-weather`, `api.call`) are sanitized to
         underscored forms and mapped back to their original names for dispatch.
 
-        Tools requiring deferred execution (kind `external`/`unapproved`) are
-        dropped because the sandbox cannot pause and resume for approval
-        round-trips. Tools with `defer_loading=True` (tool search) are dropped
-        because they are only discoverable dynamically. Both emit a one-time
-        `UserWarning`.
+        Tools requiring deferred execution (kind `external`/`unapproved`) or
+        deferred loading (`defer_loading=True`) cannot run in the sandbox and
+        are excluded from ``callable_defs``. Their names are returned in the
+        third element so the caller can promote them back to native tools.
 
         Returns:
-            A tuple of `(callable_defs, sanitized_to_original)` where
-            `sanitized_to_original` maps each sanitized name back to its
-            original tool name (only for tools that were actually renamed).
+            A tuple of ``(callable_defs, sanitized_to_original, native_fallbacks)``
+            where ``native_fallbacks`` contains original tool names that should
+            be exposed as native tool calls instead of being sandboxed.
         """
         callable_defs: dict[str, ToolDefinition] = {}
         sanitized_to_original: dict[str, str] = {}
+        native_fallbacks: set[str] = set()
         for name, tool in wrapped_tools.items():
             td = tool.tool_def
             if td.defer:
@@ -399,10 +410,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     warnings.warn(
                         f'CodeMode: tool {name!r} requires deferred execution '
                         f'(kind={td.kind!r}) and cannot be called from inside the '
-                        f'sandbox; it will be hidden from run_code.',
+                        f'sandbox; it will be exposed as a native tool call instead.',
                         UserWarning,
                         stacklevel=2,
                     )
+                native_fallbacks.add(name)
                 continue
             if td.defer_loading:
                 if name not in self._warned_deferred:
@@ -410,10 +422,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                     warnings.warn(
                         f'CodeMode: tool {name!r} uses deferred loading (tool search) '
                         f'and cannot be pre-registered in the sandbox; it will be '
-                        f'hidden from run_code.',
+                        f'exposed as a native tool call instead.',
                         UserWarning,
                         stacklevel=2,
                     )
+                native_fallbacks.add(name)
                 continue
 
             safe_name = _sanitize_tool_name(name)
@@ -448,7 +461,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 td = replace(td, name=safe_name)
 
             callable_defs[safe_name] = td
-        return callable_defs, sanitized_to_original
+        return callable_defs, sanitized_to_original, native_fallbacks
 
     def _build_description(self, callable_defs: dict[str, ToolDefinition]) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""

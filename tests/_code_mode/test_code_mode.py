@@ -660,6 +660,28 @@ class TestCodeMode:
     # Deferred tools
     # ---------------------------------------------------------------------------
 
+    async def test_deferred_loading_tools_sandboxed(self) -> None:
+        """Tools with `defer_loading=True` (tool search) are sandboxed like normal tools."""
+
+        def later(x: int) -> str:
+            """A deferred-loading tool."""
+            return str(x)
+
+        toolset = FunctionToolset[None](tools=[Tool(add), Tool(later, defer_loading=True)])
+        wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        ctx = build_run_context(None)
+        tools = await wrapper.get_tools(ctx)
+
+        description = tools['run_code'].tool_def.description
+        assert description is not None
+        # Both tools should appear as sandboxed function signatures
+        assert 'async def add' in description
+        assert 'async def later' in description
+        # The deferred-loading tool should NOT be exposed as a native tool
+        assert 'later' not in tools
+
     async def test_deferred_execution_tools_promoted_to_native_with_warning(self) -> None:
         """Tools with `kind='external'` (deferred execution) are excluded from sandbox but promoted to native."""
         td_external = ToolDefinition(

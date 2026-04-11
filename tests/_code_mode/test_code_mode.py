@@ -665,7 +665,7 @@ class TestCodeMode:
 
         def later(x: int) -> str:
             """A deferred-loading tool."""
-            return str(x)
+            return str(x)  # pragma: no cover - tool body is not invoked in this test
 
         toolset = FunctionToolset[None](tools=[Tool(add), Tool(later, defer_loading=True)])
         wrapper = CodeMode[None]().get_wrapper_toolset(toolset)
